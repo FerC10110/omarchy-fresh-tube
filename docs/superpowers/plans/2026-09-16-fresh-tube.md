@@ -3803,11 +3803,14 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   added). Remove a channel with ✕.
 - Click a video to play it in mpv. Hover a row and click ✕ to mark it seen
   without playing.
-- 󰐃 pins the panel: it stays open while you click elsewhere or open other bar
-  panels. Drag the ◢ corner to resize. Both are remembered.
+- 󰐃 in the header pins the panel: it stays open while you click elsewhere or
+  open other bar panels. Drag the ◢ corner to resize. Both are remembered.
+- 󰐃 on a row pins that video (up to three): it moves to the top and stays
+  listed after you play it, for the album you play all week or the long talk
+  you watch over several days. Unpin it when you are done.
 - Middle-click the icon to refresh without opening.
-- Keyboard: ↑/↓ select, Enter plays, Delete dismisses, Ctrl+R refreshes,
-  Esc closes.
+- Keyboard: ↑/↓ select, Enter plays, Delete dismisses, P pins, Ctrl+R
+  refreshes, Esc closes.
 
 Feeds refresh every 15 minutes, when the panel opens, and on demand.
 
@@ -3833,7 +3836,8 @@ o.bind("SUPER SHIFT", "Y", "omarchy-shell io.github.ferc10110.fresh-tube toggle"
 ## Files
 
 - `~/.config/fresh-tube/channels.json`: your channels.
-- `~/.local/state/fresh-tube/state.json`: seen videos, cached feeds, popup size and pin.
+- `~/.local/state/fresh-tube/state.json`: seen videos, cached feeds, pinned
+  videos, popup size and pin.
 
 Everything comes from each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`): no API key, no login, and no
@@ -3851,7 +3855,8 @@ file in the plugin folder reloads it in the running shell; errors show in
 `quickshell log -p /usr/share/omarchy/shell -t 40`.
 
 The `bin/fresh-tube` script is usable on its own: `add`, `remove`, `channels`,
-`refresh [--cached]`, `seen`, `prefs get|set`; add `--json` for machine output.
+`refresh [--cached]`, `seen`, `pin`, `unpin`, `prefs get|set`; add `--json` for
+machine output.
 ````
 
 - [ ] **Step 3: Versión 1.0.0**
@@ -4265,6 +4270,213 @@ Expected: `OK` con 8 tests más que antes; `validate exit=0`.
 git add lib/fresh_tube/errors.py lib/fresh_tube/store.py lib/fresh_tube/cli.py tests/test_store.py tests/test_cli.py
 git commit -F - <<'MSG'
 Pin up to three videos so watching them does not hide them
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011DPqvBbwQCc2wPWRZoVQkC
+MSG
+```
+
+---
+
+### Task 15: Videos pineados (UI): botón de pin por fila, pineados arriba, tecla P
+
+Agregado tras la aprobación del usuario del 2026-09-16. Se ejecuta después de la Tarea 14 y antes de la 13.
+
+**Files:**
+- Modify: `Panel.qml` (`pinnedVideos`, `isPinned`, `pin`, `unpin`, `togglePinVideo`, runner `pinCmd`, `applyPayload`)
+- Modify: `VideosView.qml` (filas = pineados + nuevos, tecla `P`, `Delete` no descarta pineados, delegate)
+- Modify: `VideoRow.qml` (botón de pin, `✕` oculto en pineados)
+
+**Interfaces:**
+- Consumes: CLI `pin`/`unpin` y `pinned` en el payload (Tarea 14); `Panel`, `VideosView`, `VideoRow` de las Tareas 11 y 12.
+- Produces: en `Panel`: `pinnedVideos` (array), `maxPins` (3), `pinsFull` (bool), `isPinned(video) -> bool`, `pin(video)`, `unpin(video)`, `togglePinVideo(video)`; `VideoRow { pinned; pinsFull; signal pinToggled() }`; en `VideosView`: `pinnedCount`. `BarWidget` no cambia: `count` sigue siendo `videos.length`, que ya excluye los pineados.
+
+No hay test automático de QML: se verifica con el log de la shell, el CLI y el archivo de estado; lo visual queda para el checklist manual (punto 10 del spec).
+
+- [ ] **Step 1: Panel.qml**
+
+Después de `property var channels: []` agregar:
+
+```qml
+  property var pinnedVideos: []
+
+  readonly property int maxPins: 3
+  readonly property bool pinsFull: pinnedVideos.length >= maxPins
+```
+
+En `applyPayload`, después de la línea de `videos`:
+
+```qml
+    pinnedVideos = Array.isArray(data.pinned) ? data.pinned : []
+```
+
+Después de `function dismiss(video) { ... }` agregar:
+
+```qml
+  function isPinned(video) {
+    if (!video) return false
+    for (var i = 0; i < pinnedVideos.length; i++) {
+      if (pinnedVideos[i].videoId === video.videoId) return true
+    }
+    return false
+  }
+
+  function pin(video) {
+    if (!video || pinCmd.running) return
+    if (pinsFull) {
+      setNotice("Pin limit reached (" + maxPins + ")", true)
+      return
+    }
+    pinCmd.start(["pin", "--", video.videoId])
+  }
+
+  function unpin(video) {
+    if (!video || pinCmd.running) return
+    pinCmd.start(["unpin", "--", video.videoId])
+  }
+
+  function togglePinVideo(video) {
+    if (isPinned(video)) unpin(video)
+    else pin(video)
+  }
+```
+
+Después del runner `seenCmd` agregar:
+
+```qml
+  // Pinning moves a video between the two lists, so the cache is reread
+  // instead of patching them by hand; other screens get told the same way.
+  FreshTubeCommand {
+    id: pinCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      var data = root.parseJson(out)
+      if (code !== 0 || !data) {
+        root.setNotice(root.lastLine(err) || "Could not change the pin", true)
+        return
+      }
+      if (root.noticeIsError) root.setNotice("", false)
+      root.loadCached()
+      if (root.hostWidget && typeof root.hostWidget.broadcast === "function") root.hostWidget.broadcast("reloadCached")
+    }
+  }
+```
+
+- [ ] **Step 2: VideoRow.qml**
+
+Reemplazar el comentario de cabecera por:
+
+```qml
+// One video: thumbnail, title, channel and age. A click plays it. On hover
+// (or on the keyboard-selected row) a pin keeps it listed after watching and,
+// unless it is pinned, a ✕ marks it seen instead.
+```
+
+Después de `property real nowMs: Date.now()` agregar:
+
+```qml
+  property bool pinned: false
+  property bool pinsFull: false
+```
+
+Después de `signal dismissed()` agregar:
+
+```qml
+  signal pinToggled()
+```
+
+Reemplazar la línea de `showDismiss` por:
+
+```qml
+  readonly property bool showPin: pinned || hover.containsMouse || selected
+  readonly property bool showDismiss: !pinned && (hover.containsMouse || selected)
+```
+
+Reemplazar el `width` de `textColumn` por:
+
+```qml
+      width: content.width - thumb.width - content.spacing
+        - (pinButton.visible ? pinButton.implicitWidth + content.spacing : 0)
+        - (dismissButton.visible ? dismissButton.implicitWidth + content.spacing : 0)
+```
+
+Y antes del `Button { id: dismissButton ... }` agregar:
+
+```qml
+    Button {
+      id: pinButton
+      visible: row.showPin
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: "󰐃"
+      selected: row.pinned
+      opacity: !row.pinned && row.pinsFull ? 0.4 : 1
+      tooltipText: row.pinned ? "Unpin (P)"
+        : (row.pinsFull ? "Pin limit reached (3)" : "Pin: keep it listed after watching (P)")
+      foreground: row.fg
+      fontFamily: row.family
+      onClicked: row.pinToggled()
+    }
+```
+
+- [ ] **Step 3: VideosView.qml**
+
+Reemplazar el comentario de cabecera por:
+
+```qml
+// The pinned videos followed by the new ones, with the header actions.
+// Choosing a video asks the panel to play it; nothing here runs the script.
+```
+
+Reemplazar la línea de `rows` por:
+
+```qml
+  readonly property int pinnedCount: host ? host.pinnedVideos.length : 0
+  readonly property var rows: host ? host.pinnedVideos.concat(host.videos) : []
+```
+
+En `handleKey`, reemplazar la rama de `Qt.Key_Delete` por:
+
+```qml
+    } else if (event.key === Qt.Key_Delete) {
+      if (rows[selected] && !host.isPinned(rows[selected])) host.dismiss(rows[selected])
+    } else if (!ctrl && event.key === Qt.Key_P) {
+      if (rows[selected]) host.togglePinVideo(rows[selected])
+```
+
+En el `delegate: VideoRow { ... }`, después de `nowMs: view.nowMs` agregar:
+
+```qml
+      pinned: index < view.pinnedCount
+      pinsFull: view.host ? view.host.pinsFull : false
+      onPinToggled: view.host.togglePinVideo(modelData)
+```
+
+- [ ] **Step 4: Verificar en la barra real**
+
+Run:
+```bash
+sleep 2; quickshell log -p /usr/share/omarchy/shell -t 60 | grep -i -E 'error|warn|fresh' | grep -v qt.qpa.services | tail -10
+bin/fresh-tube add @LinusTechTips
+ID=$(bin/fresh-tube refresh --json --cached | python3 -c 'import json,sys; print(json.load(sys.stdin)["videos"][0]["videoId"])')
+bin/fresh-tube pin "$ID"
+bin/fresh-tube refresh --json --cached | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["videos"]), [p["videoId"] for p in d["pinned"]])'
+bin/fresh-tube seen "$ID"
+bin/fresh-tube refresh --json --cached | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["videos"]), [p["videoId"] for p in d["pinned"]])'
+omarchy-shell io.github.ferc10110.fresh-tube open; sleep 1; omarchy-shell io.github.ferc10110.fresh-tube close
+sleep 1; quickshell log -p /usr/share/omarchy/shell -t 30 | grep -i -E 'error|warn' | grep -v qt.qpa.services | tail -5
+bin/fresh-tube unpin "$ID"
+bin/fresh-tube remove "$(bin/fresh-tube channels --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["channels"][0]["id"])')"
+```
+Expected: sin errores QML; tras `pin`: `0 ['<id>']`; tras `seen`: sigue `0 ['<id>']`; el panel abre y cierra limpio con el video pineado cargado; al final `channels.json` vacío y `state.json` sin pins.
+
+Después, en la barra (checklist del usuario, punto 10 del spec): el pin en una fila la manda arriba y queda marcado; reproducirla no la saca; el contador no la cuenta; con 3 pineados el pin de las otras filas se ve atenuado y al hacer click aparece "Pin limit reached (3)"; `P` pinea la fila resaltada; `Delete` no descarta una pineada; despinear una ya vista la hace desaparecer.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add Panel.qml VideosView.qml VideoRow.qml
+git commit -F - <<'MSG'
+Pin videos from the panel and keep them on top
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_011DPqvBbwQCc2wPWRZoVQkC
