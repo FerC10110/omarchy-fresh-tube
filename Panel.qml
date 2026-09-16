@@ -33,6 +33,11 @@ Panel {
   property var prefsQueue: []
   property var channels: []
 
+  property var pinnedVideos: []
+
+  readonly property int maxPins: 3
+  readonly property bool pinsFull: pinnedVideos.length >= maxPins
+
   readonly property bool refreshing: refreshCmd.running
   readonly property bool adding: addCmd.running
   readonly property string program: pluginPath("bin/fresh-tube")
@@ -76,6 +81,7 @@ Panel {
 
   function applyPayload(data) {
     videos = Array.isArray(data.videos) ? data.videos : []
+    pinnedVideos = Array.isArray(data.pinned) ? data.pinned : []
     errors = Array.isArray(data.errors) ? data.errors : []
     fetchedAt = String(data.fetchedAt || "")
     offline = data.offline === true
@@ -120,6 +126,33 @@ Panel {
     if (!video || seenCmd.running) return
     pendingPlay = null
     seenCmd.start(["seen", "--", video.videoId])
+  }
+
+  function isPinned(video) {
+    if (!video) return false
+    for (var i = 0; i < pinnedVideos.length; i++) {
+      if (pinnedVideos[i].videoId === video.videoId) return true
+    }
+    return false
+  }
+
+  function pin(video) {
+    if (!video || pinCmd.running) return
+    if (pinsFull) {
+      setNotice("Pin limit reached (" + maxPins + ")", true)
+      return
+    }
+    pinCmd.start(["pin", "--", video.videoId])
+  }
+
+  function unpin(video) {
+    if (!video || pinCmd.running) return
+    pinCmd.start(["unpin", "--", video.videoId])
+  }
+
+  function togglePinVideo(video) {
+    if (isPinned(video)) unpin(video)
+    else pin(video)
   }
 
   // Every `prefs set` rewrites the whole state file, so writes go one at a
@@ -283,6 +316,23 @@ Panel {
       var id = data ? String(data.seen || "") : ""
       if (id !== "") root.removeVideo(id)
       if (video && !root.pinned) root.close()
+    }
+  }
+
+  // Pinning moves a video between the two lists, so the cache is reread
+  // instead of patching them by hand; other screens get told the same way.
+  FreshTubeCommand {
+    id: pinCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      var data = root.parseJson(out)
+      if (code !== 0 || !data) {
+        root.setNotice(root.lastLine(err) || "Could not change the pin", true)
+        return
+      }
+      if (root.noticeIsError) root.setNotice("", false)
+      root.loadCached()
+      if (root.hostWidget && typeof root.hostWidget.broadcast === "function") root.hostWidget.broadcast("reloadCached")
     }
   }
 

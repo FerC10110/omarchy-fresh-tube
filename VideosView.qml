@@ -3,8 +3,8 @@ import qs.Commons
 import qs.Ui
 import "FreshTubeModel.js" as Model
 
-// The list of new videos with the header actions. Choosing a video asks the
-// panel to play it; nothing here runs the script.
+// The pinned videos followed by the new ones, with the header actions.
+// Choosing a video asks the panel to play it; nothing here runs the script.
 Item {
   id: view
 
@@ -17,7 +17,8 @@ Item {
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property color urgent: host ? host.urgent : Color.urgent
   readonly property string family: host ? host.fontFamily : Style.font.family
-  readonly property var rows: host ? host.videos : []
+  readonly property int pinnedCount: host ? host.pinnedVideos.length : 0
+  readonly property var rows: host ? host.pinnedVideos.concat(host.videos) : []
   readonly property real gap: Style.space(8)
 
   onRowsChanged: if (selected >= rows.length) selected = Math.max(0, rows.length - 1)
@@ -46,7 +47,9 @@ Item {
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       if (rows[selected]) host.play(rows[selected])
     } else if (event.key === Qt.Key_Delete) {
-      if (rows[selected]) host.dismiss(rows[selected])
+      if (rows[selected] && !host.isPinned(rows[selected])) host.dismiss(rows[selected])
+    } else if (!ctrl && event.key === Qt.Key_P) {
+      if (rows[selected]) host.togglePinVideo(rows[selected])
     } else if (event.key === Qt.Key_Escape) {
       host.close()
     } else if (ctrl && event.key === Qt.Key_R) {
@@ -151,6 +154,9 @@ Item {
       video: modelData
       selected: index === view.selected
       nowMs: view.nowMs
+      pinned: index < view.pinnedCount
+      pinsFull: view.host ? view.host.pinsFull : false
+      onPinToggled: view.host.togglePinVideo(modelData)
       onActivated: view.host.play(modelData)
       onDismissed: view.host.dismiss(modelData)
     }

@@ -3,8 +3,9 @@ import qs.Commons
 import qs.Ui
 import "FreshTubeModel.js" as Model
 
-// One video: thumbnail, title, channel and age. A click plays it; the ✕ that
-// shows on hover (or on the keyboard-selected row) marks it seen instead.
+// One video: thumbnail, title, channel and age. A click plays it. On hover
+// (or on the keyboard-selected row) a pin keeps it listed after watching and,
+// unless it is pinned, a ✕ marks it seen instead.
 Rectangle {
   id: row
 
@@ -12,14 +13,18 @@ Rectangle {
   property var video: null
   property bool selected: false
   property real nowMs: Date.now()
+  property bool pinned: false
+  property bool pinsFull: false
 
   signal activated()
   signal dismissed()
+  signal pinToggled()
 
   readonly property color fg: host ? host.foreground : Color.foreground
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property string family: host ? host.fontFamily : Style.font.family
-  readonly property bool showDismiss: hover.containsMouse || selected
+  readonly property bool showPin: pinned || hover.containsMouse || selected
+  readonly property bool showDismiss: !pinned && (hover.containsMouse || selected)
 
   implicitHeight: Math.max(thumb.height, textColumn.implicitHeight) + Style.space(12)
   radius: Style.cornerRadius
@@ -61,6 +66,7 @@ Rectangle {
     Column {
       id: textColumn
       width: content.width - thumb.width - content.spacing
+        - (pinButton.visible ? pinButton.implicitWidth + content.spacing : 0)
         - (dismissButton.visible ? dismissButton.implicitWidth + content.spacing : 0)
       spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
@@ -87,6 +93,20 @@ Rectangle {
         font.family: row.family
         font.pixelSize: Style.font.caption
       }
+    }
+
+    Button {
+      id: pinButton
+      visible: row.showPin
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: "󰐃"
+      selected: row.pinned
+      opacity: !row.pinned && row.pinsFull ? 0.4 : 1
+      tooltipText: row.pinned ? "Unpin (P)"
+        : (row.pinsFull ? "Pin limit reached (3)" : "Pin: keep it listed after watching (P)")
+      foreground: row.fg
+      fontFamily: row.family
+      onClicked: row.pinToggled()
     }
 
     Button {
