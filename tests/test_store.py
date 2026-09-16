@@ -118,6 +118,14 @@ class State(StoreTest):
         self.box.write_json(self.box.state_file, {"version": 1, "prefs": {"width": 600}})
         self.assertEqual(store.load_state()["prefs"], {"width": 600, "height": 520, "pinned": False})
 
+    def test_invalid_saved_prefs_fall_back_to_defaults(self):
+        # Corrupted or hand-edited state.json with invalid pref values must not corrupt the popup.
+        self.box.write_json(self.box.state_file, {"version": 1, "prefs": {"width": "banana", "height": 999999, "pinned": "yes"}})
+        self.assertEqual(store.load_state()["prefs"], store.DEFAULT_PREFS)
+        # Also confirm that a valid partial dict still survives.
+        self.box.write_json(self.box.state_file, {"version": 1, "prefs": {"width": 640, "height": 300}})
+        self.assertEqual(store.load_state()["prefs"], {"width": 640, "height": 300, "pinned": False})
+
 
 class Feeds(StoreTest):
     def test_update_feed_and_error_keep_cache(self):

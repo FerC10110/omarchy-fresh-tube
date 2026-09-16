@@ -117,6 +117,20 @@ def empty_state():
     return {"version": STATE_VERSION, "seen": [], "feeds": {}, "fetchedAt": "", "prefs": dict(DEFAULT_PREFS)}
 
 
+def _valid_pref(key, value):
+    """Check if a saved pref value is valid; return True to keep it, False to use the default."""
+    if key in PREF_LIMITS:
+        # width and height: must be int (not bool, which is a subclass of int) within limits.
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+        low, high = PREF_LIMITS[key]
+        return low <= value <= high
+    elif key == "pinned":
+        # pinned: must be a real bool.
+        return isinstance(value, bool)
+    return False
+
+
 def load_state():
     data = read_json(state_path(), None)
     state = empty_state()
@@ -131,7 +145,7 @@ def load_state():
     prefs = data.get("prefs")
     if isinstance(prefs, dict):
         for key in DEFAULT_PREFS:
-            if key in prefs:
+            if key in prefs and _valid_pref(key, prefs[key]):
                 state["prefs"][key] = prefs[key]
     return state
 
