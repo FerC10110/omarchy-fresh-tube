@@ -10,6 +10,7 @@ Item {
 
   property var host: null
   property int selected: 0
+  property string selectedId: ""
   property real nowMs: Date.now()
 
   readonly property Item focusItem: keys
@@ -21,7 +22,20 @@ Item {
   readonly property var rows: host ? host.pinnedVideos.concat(host.videos) : []
   readonly property real gap: Style.space(8)
 
-  onRowsChanged: if (selected >= rows.length) selected = Math.max(0, rows.length - 1)
+  // Keep the highlight on the same video when the list reorders (a pin moves
+  // it to the top); when that video is gone, stay at the same slot so the
+  // highlight lands on the next one.
+  onRowsChanged: {
+    var index = -1
+    if (selectedId !== "") {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].videoId === selectedId) { index = i; break }
+      }
+    }
+    if (index >= 0) selected = index
+    else if (selected >= rows.length) selected = Math.max(0, rows.length - 1)
+    selectedId = rows[selected] ? rows[selected].videoId : ""
+  }
   onVisibleChanged: if (visible) nowMs = Date.now()
 
   // Ages tick while the list is showing.
@@ -35,6 +49,7 @@ Item {
   function moveSelection(delta) {
     if (rows.length === 0) return
     selected = Math.max(0, Math.min(rows.length - 1, selected + delta))
+    selectedId = rows[selected] ? rows[selected].videoId : ""
     list.positionViewAtIndex(selected, ListView.Contain)
   }
 
