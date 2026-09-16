@@ -6,15 +6,17 @@ import qs.Ui
 
 // Layer-shell popup hanging from the bar icon, with two things the stock
 // KeyboardPanel does not have: a pinned mode that survives clicks elsewhere
-// and other panels opening, and a grip in the bottom-right corner to resize
-// it. Adapted from Omarchy's Ui/KeyboardPanel.qml (MIT, David Heinemeier
-// Hansson) and the pinned mode of yani.camera's CameraPopup.qml (MIT, Yani);
-// see THIRD_PARTY_NOTICES.md.
+// and other panels opening, and a grip in the corner farthest from the bar
+// to resize it, so the card always grows toward the cursor. Adapted from
+// Omarchy's Ui/KeyboardPanel.qml (MIT, David Heinemeier Hansson) and the
+// pinned mode of yani.camera's CameraPopup.qml (MIT, Yani); see
+// THIRD_PARTY_NOTICES.md.
 //
 // The card's leading edge lines up with the icon's leading edge along the
-// bar, so growing it from the bottom-right corner never moves it. The popup
-// never assigns its own contentWidth/contentHeight: it asks the owner through
-// resizeRequested and the owner's binding feeds the new size back.
+// bar, so growing it from the corner farthest from the bar never moves the
+// anchored edge. The popup never assigns its own contentWidth/contentHeight:
+// it asks the owner through resizeRequested and the owner's binding feeds
+// the new size back.
 PanelWindow {
   id: root
 
@@ -48,6 +50,8 @@ PanelWindow {
   readonly property var coordinatorKey: owner || root
   readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property string barPos: bar ? bar.position : "top"
+  readonly property bool growsUp: barPos === "bottom"
+  readonly property bool growsLeft: barPos === "right"
   readonly property bool containsMouse: cardHover.hovered
 
   function close() {
@@ -357,12 +361,14 @@ PanelWindow {
       visible: root.resizable
       width: Style.space(18)
       height: Style.space(18)
-      anchors.right: parent.right
-      anchors.bottom: parent.bottom
+      anchors.right: root.growsLeft ? undefined : parent.right
+      anchors.left: root.growsLeft ? parent.left : undefined
+      anchors.bottom: root.growsUp ? undefined : parent.bottom
+      anchors.top: root.growsUp ? parent.top : undefined
       hoverEnabled: true
       preventStealing: true
       acceptedButtons: Qt.LeftButton
-      cursorShape: Qt.SizeFDiagCursor
+      cursorShape: (!root.growsUp && !root.growsLeft) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor
 
       property point start
       property int startWidth
@@ -376,20 +382,30 @@ PanelWindow {
       onPositionChanged: function(mouse) {
         if (!pressed) return
         var p = mapToItem(null, mouse.x, mouse.y)
-        var maxW = Math.max(root.minContentWidth, root.screenW - card.x - root.margin)
-        var maxH = Math.max(root.minContentHeight, root.screenH - card.y - root.margin)
+        var dx = root.growsLeft ? (start.x - p.x) : (p.x - start.x)
+        var dy = root.growsUp ? (start.y - p.y) : (p.y - start.y)
+        var maxW = root.growsLeft
+          ? Math.max(root.minContentWidth, card.x + card.width - root.margin)
+          : Math.max(root.minContentWidth, root.screenW - card.x - root.margin)
+        var maxH = root.growsUp
+          ? Math.max(root.minContentHeight, card.y + card.height - root.margin)
+          : Math.max(root.minContentHeight, root.screenH - card.y - root.margin)
         root.resizeRequested(
-          Math.round(root.clamp(startWidth + (p.x - start.x), root.minContentWidth, maxW)),
-          Math.round(root.clamp(startHeight + (p.y - start.y), root.minContentHeight, maxH)))
+          Math.round(root.clamp(startWidth + dx, root.minContentWidth, maxW)),
+          Math.round(root.clamp(startHeight + dy, root.minContentHeight, maxH)))
       }
       onReleased: root.resized(root.contentWidth, root.contentHeight)
 
       Text {
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.right: root.growsLeft ? undefined : parent.right
+        anchors.left: root.growsLeft ? parent.left : undefined
+        anchors.bottom: root.growsUp ? undefined : parent.bottom
+        anchors.top: root.growsUp ? parent.top : undefined
         anchors.rightMargin: Style.space(3)
+        anchors.leftMargin: Style.space(3)
         anchors.bottomMargin: Style.space(2)
-        text: "◢"
+        anchors.topMargin: Style.space(2)
+        text: root.growsUp ? (root.growsLeft ? "◤" : "◥") : (root.growsLeft ? "◣" : "◢")
         textFormat: Text.PlainText
         color: root.gripColor
         opacity: grip.containsMouse || grip.pressed ? 0.9 : 0.35
