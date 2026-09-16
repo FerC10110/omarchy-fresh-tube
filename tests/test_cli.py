@@ -87,3 +87,98 @@ class Channels(CliTest):
         self.assertEqual(self.json("channels", "--json"), {"channels": []})
         self.assertNotIn(LTT, self.box.read_json(self.box.state_file)["feeds"])
         self.assertIn("No such channel", self.fails(5, "remove", LTT))
+
+
+class Refresh(CliTest):
+    def setUp(self):
+        super().setUp()
+        self.box.apply()
+        self.channels = [{"id": "UC1", "name": "One", "url": "u1", "addedAt": "t"},
+                         {"id": "UC2", "name": "Two", "url": "u2", "addedAt": "t"}]
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": self.channels})
+
+    @staticmethod
+    def two_feeds(channel_id, timeout=10):
+        if channel_id == "UC1":
+            return {"name": "One", "latest": {"videoId": "v1", "title": "First", "thumbnail": "t1",
+                                              "published": "2026-09-15T10:00:00+00:00"}, "recent": ["v1"]}
+        return {"name": "Two", "latest": {"videoId": "v2", "title": "Second", "thumbnail": "t2",
+                                          "published": "2026-09-16T10:00:00+00:00"}, "recent": ["v2"]}
+
+    def refresh(self, *extra, fetch=None):
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=fetch or self.two_feeds), \
+             support.captured() as (out, err):
+            code = cli.main(["refresh", "--json", *extra])
+        self.assertEqual(code, 0, err.getvalue())
+        return json.loads(out.getvalue())
+
+    def test_live_refresh_lists_newest_first_and_caches(self):
+        payload = self.refresh()
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
+        self.assertEqual(payload["videos"][0]["channel"], "Two")
+        self.assertEqual(payload["videos"][0]["url"], "https://www.youtube.com/watch?v=v2")
+        self.assertFalse(payload["offline"])
+        self.assertEqual(payload["channelCount"], 2)
+        self.assertEqual(payload["errors"], [])
+        self.assertRegex(payload["fetchedAt"], r"^\d{4}-")
+        self.assertEqual(self.box.read_json(self.box.state_file)["feeds"]["UC1"]["latest"]["videoId"], "v1")
+
+    def test_cached_refresh_needs_no_network(self):
+        self.refresh()
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=AssertionError("network")), \
+             support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh", "--json", "--cached"]), 0, err.getvalue())
+        payload = json.loads(out.getvalue())
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
+        self.assertTrue(payload["offline"])
+
+    def test_one_failing_channel_keeps_its_cache_and_reports(self):
+        self.refresh()
+
+        def flaky(channel_id, timeout=10):
+            if channel_id == "UC2":
+                raise FreshTubeError("HTTP 500 from feed", NETWORK)
+            return self.two_feeds(channel_id)
+        payload = self.refresh(fetch=flaky)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
+        self.assertFalse(payload["offline"])
+        self.assertEqual(payload["errors"], [{"channelId": "UC2", "channel": "Two", "message": "HTTP 500 from feed"}])
+        self.assertEqual(self.json("channels", "--json")["channels"][1]["lastError"], "HTTP 500 from feed")
+        # A later good fetch clears the error.
+        self.assertEqual(self.refresh()["errors"], [])
+
+    def test_all_failing_is_offline_and_keeps_fetched_at(self):
+        first = self.refresh()
+
+        def down(channel_id, timeout=10):
+            raise FreshTubeError("Could not reach", NETWORK)
+        payload = self.refresh(fetch=down)
+        self.assertTrue(payload["offline"])
+        self.assertEqual(payload["fetchedAt"], first["fetchedAt"])
+        self.assertEqual(len(payload["videos"]), 2)
+
+    def test_seen_hides_the_video_and_prunes(self):
+        self.refresh()
+        self.assertEqual(self.json("seen", "v2"), {"seen": "v2"})
+        self.assertEqual(self.json("seen", "v2"), {"seen": "v2"})
+        self.assertEqual([v["videoId"] for v in self.refresh("--cached")["videos"]], ["v1"])
+
+        def moved_on(channel_id, timeout=10):
+            if channel_id == "UC2":
+                return {"name": "Two", "latest": {"videoId": "v3", "title": "Third", "thumbnail": "t3",
+                                                  "published": "2026-09-17T10:00:00+00:00"}, "recent": ["v3"]}
+            return self.two_feeds(channel_id)
+        payload = self.refresh(fetch=moved_on)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v3", "v1"])
+        self.assertEqual(self.box.read_json(self.box.state_file)["seen"], [])
+
+    def test_no_channels(self):
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})
+        payload = self.refresh(fetch=mock.Mock(side_effect=AssertionError("network")))
+        self.assertEqual(payload, {"videos": [], "fetchedAt": "", "offline": False, "channelCount": 0, "errors": []})
+
+    def test_plain_refresh_prints_one_line_per_video(self):
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=self.two_feeds), support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh"]), 0)
+        self.assertEqual(out.getvalue().splitlines(), ["Two: Second  https://www.youtube.com/watch?v=v2",
+                                                       "One: First  https://www.youtube.com/watch?v=v1"])

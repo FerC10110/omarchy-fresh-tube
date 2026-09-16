@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from . import feed, resolve, store
 from .errors import DUPLICATE, FreshTubeError
@@ -59,6 +60,67 @@ def cmd_channels(args):
     return 0
 
 
+MAX_PARALLEL_FETCHES = 6
+
+
+def fetch_one(channel):
+    try:
+        return feed.fetch_feed(channel["id"]), ""
+    except FreshTubeError as e:
+        return None, str(e)
+
+
+def refresh_all(channels, cached):
+    results = []
+    if channels and not cached:
+        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
+            results = list(pool.map(fetch_one, channels))
+    # Load the state only now: the fetches took a while and the panel may have
+    # saved a preference or a seen video in the meantime.
+    state = store.load_state()
+    if channels and not cached:
+        now = store.now_iso()
+        any_ok = False
+        for channel, (parsed, error) in zip(channels, results):
+            if parsed is not None:
+                store.update_feed(state, channel["id"], parsed, now)
+                any_ok = True
+            else:
+                store.set_feed_error(state, channel["id"], error)
+        if any_ok:
+            state["fetchedAt"] = now
+        store.prune_seen(state)
+        store.save_state(state)
+        offline = not any_ok
+    else:
+        offline = cached
+    errors = []
+    for channel in channels:
+        message = (state["feeds"].get(channel["id"]) or {}).get("lastError", "")
+        if message:
+            errors.append({"channelId": channel["id"], "channel": channel.get("name", ""), "message": message})
+    return {"videos": store.unseen_videos(state, channels), "fetchedAt": state["fetchedAt"],
+            "offline": offline, "channelCount": len(channels), "errors": errors}
+
+
+def cmd_refresh(args):
+    payload = refresh_all(store.load_channels(), args.cached)
+    if args.json:
+        emit(payload)
+        return 0
+    for v in payload["videos"]:
+        print(f"{v['channel']}: {v['title']}  {v['url']}")
+    return 0
+
+
+def cmd_seen(args):
+    state = store.load_state()
+    store.mark_seen(state, args.video_id)
+    store.save_state(state)
+    emit({"seen": args.video_id})
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="fresh-tube", description=__doc__)
     sub = parser.add_subparsers(dest="command", metavar="command")
@@ -75,6 +137,15 @@ def build_parser():
     p = sub.add_parser("channels", help="list the channels")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_channels)
+
+    p = sub.add_parser("refresh", help="fetch every channel's feed and list the unseen videos")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--cached", action="store_true", help="only what is already on disk, no network")
+    p.set_defaults(func=cmd_refresh)
+
+    p = sub.add_parser("seen", help="mark a video as seen")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_seen)
 
     return parser, sub
 
