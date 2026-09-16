@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 import support
-from fresh_tube import cli
+from fresh_tube import cli, store
 from fresh_tube.errors import NETWORK, FreshTubeError
 
 
@@ -182,3 +182,29 @@ class Refresh(CliTest):
             self.assertEqual(cli.main(["refresh"]), 0)
         self.assertEqual(out.getvalue().splitlines(), ["Two: Second  https://www.youtube.com/watch?v=v2",
                                                        "One: First  https://www.youtube.com/watch?v=v1"])
+
+    def test_cached_with_no_channels_is_not_offline(self):
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=AssertionError("network")), \
+             support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh", "--json", "--cached"]), 0, err.getvalue())
+        payload = json.loads(out.getvalue())
+        self.assertFalse(payload["offline"])
+        self.assertEqual(payload["channelCount"], 0)
+        self.assertEqual(payload["videos"], [])
+
+    def test_prefs_written_during_fetch_survive_refresh(self):
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": [self.channels[0]]})
+
+        def pref_saver(channel_id, timeout=10):
+            state = store.load_state()
+            store.set_pref(state, "width", 777)
+            store.save_state(state)
+            return self.two_feeds(channel_id)
+
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=pref_saver), \
+             support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh", "--json"]), 0, err.getvalue())
+        state = self.box.read_json(self.box.state_file)
+        self.assertEqual(state["prefs"]["width"], 777)
+        self.assertEqual(state["feeds"]["UC1"]["latest"]["videoId"], "v1")

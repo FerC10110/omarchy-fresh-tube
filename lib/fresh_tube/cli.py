@@ -93,7 +93,7 @@ def refresh_all(channels, cached):
         store.save_state(state)
         offline = not any_ok
     else:
-        offline = cached
+        offline = cached and bool(channels)
     errors = []
     for channel in channels:
         message = (state["feeds"].get(channel["id"]) or {}).get("lastError", "")
