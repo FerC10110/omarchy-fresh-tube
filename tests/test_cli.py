@@ -208,3 +208,14 @@ class Refresh(CliTest):
         state = self.box.read_json(self.box.state_file)
         self.assertEqual(state["prefs"]["width"], 777)
         self.assertEqual(state["feeds"]["UC1"]["latest"]["videoId"], "v1")
+
+
+class Prefs(CliTest):
+    def test_get_and_set(self):
+        self.assertEqual(self.json("prefs", "get"), {"width": 420, "height": 520, "pinned": False})
+        self.assertEqual(self.json("prefs", "set", "width", "640")["width"], 640)
+        self.assertEqual(self.json("prefs", "set", "pinned", "true")["pinned"], True)
+        self.assertEqual(self.json("prefs", "get"), {"width": 640, "height": 520, "pinned": True})
+        self.assertIn("between 220 and 4000", self.fails(2, "prefs", "set", "height", "10"))
+        self.assertIn("Unknown preference", self.fails(2, "prefs", "set", "color", "red"))
+        self.assertIn("needs a key and a value", self.fails(2, "prefs", "set", "width"))

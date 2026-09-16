@@ -5,7 +5,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from . import feed, resolve, store
-from .errors import DUPLICATE, FreshTubeError
+from .errors import DUPLICATE, USAGE, FreshTubeError
 
 
 def emit(data):
@@ -121,6 +121,17 @@ def cmd_seen(args):
     return 0
 
 
+def cmd_prefs(args):
+    state = store.load_state()
+    if args.action == "set":
+        if args.key is None or args.value is None:
+            raise FreshTubeError("prefs set needs a key and a value", USAGE)
+        store.set_pref(state, args.key, args.value)
+        store.save_state(state)
+    emit(state["prefs"])
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="fresh-tube", description=__doc__)
     sub = parser.add_subparsers(dest="command", metavar="command")
@@ -146,6 +157,12 @@ def build_parser():
     p = sub.add_parser("seen", help="mark a video as seen")
     p.add_argument("video_id")
     p.set_defaults(func=cmd_seen)
+
+    p = sub.add_parser("prefs", help="read or change the popup preferences (width, height, pinned)")
+    p.add_argument("action", choices=["get", "set"])
+    p.add_argument("key", nargs="?")
+    p.add_argument("value", nargs="?")
+    p.set_defaults(func=cmd_prefs)
 
     return parser, sub
 
