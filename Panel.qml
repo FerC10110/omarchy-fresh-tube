@@ -104,6 +104,12 @@ Panel {
       setNotice(Model.playerName(playerCommand) + " not found. Set playerCommand in shell.json.", true)
       return
     }
+    try {
+      Quickshell.execDetached(Model.playerArgs(playerCommand).concat([video.url]))
+    } catch (e) {
+      setNotice("Could not start " + Model.playerName(playerCommand) + ": " + e, true)
+      return
+    }
     pendingPlay = video
     seenCmd.start(["seen", "--", video.videoId])
   }
@@ -155,6 +161,8 @@ Panel {
   }
 
   onViewChanged: focusCurrent()
+
+  onPlayerCommandChanged: checkPlayer()
 
   Component.onCompleted: {
     prefsGetCmd.start(["prefs", "get"])
@@ -242,10 +250,7 @@ Panel {
       var data = root.parseJson(out)
       var id = data ? String(data.seen || "") : ""
       if (id !== "") root.removeVideo(id)
-      if (video) {
-        Quickshell.execDetached(Model.playerArgs(root.playerCommand).concat([video.url]))
-        if (!root.pinned) root.close()
-      }
+      if (video && !root.pinned) root.close()
     }
   }
 
