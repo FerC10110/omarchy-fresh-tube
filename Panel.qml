@@ -31,15 +31,17 @@ Panel {
   property bool playerFound: true
   property var pendingPlay: null
   property var prefsQueue: []
+  property var channels: []
 
   readonly property bool refreshing: refreshCmd.running
+  readonly property bool adding: addCmd.running
   readonly property string program: pluginPath("bin/fresh-tube")
   readonly property string playerCommand: String(setting("playerCommand", "mpv") || "mpv")
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property Item currentFocus: videosView.focusItem
+  readonly property Item currentFocus: view === "channels" ? channelsView.focusItem : videosView.focusItem
 
   // Absolute path of a file shipped inside this plugin, wherever it is installed.
   function pluginPath(relative) {
@@ -142,6 +144,36 @@ Panel {
   }
 
   function togglePin() { setPinned(!pinned) }
+
+  function loadChannels() {
+    channelsCmd.start(["channels", "--json"])
+  }
+
+  function showChannels() {
+    channelsView.error = ""
+    view = "channels"
+    loadChannels()
+  }
+
+  function showVideos() {
+    view = "videos"
+  }
+
+  function addChannel(text) {
+    var value = String(text || "").trim()
+    if (value === "" || addCmd.running) return
+    if (!Model.looksLikeChannelInput(value)) {
+      channelsView.error = "That doesn't look like a YouTube channel"
+      return
+    }
+    channelsView.error = ""
+    addCmd.start(["add", "--", value])
+  }
+
+  function removeChannel(channelId) {
+    if (!channelId || removeCmd.running) return
+    removeCmd.start(["remove", "--", channelId])
+  }
 
   function saveSize(w, h) {
     popupWidth = w
@@ -260,6 +292,47 @@ Panel {
     onFinished: function(code, out, err) { root.playerFound = code === 0 }
   }
 
+  FreshTubeCommand {
+    id: channelsCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      var data = root.parseJson(out)
+      if (code !== 0 || !data) {
+        channelsView.error = root.lastLine(err) || "Could not read the channels"
+        return
+      }
+      root.channels = Array.isArray(data.channels) ? data.channels : []
+    }
+  }
+
+  // Resolving a channel can chain a page fetch, a yt-dlp fallback and the
+  // feed, so this one gets a longer leash.
+  FreshTubeCommand {
+    id: addCmd
+    program: root.program
+    timeoutMs: 60000
+    onFinished: function(code, out, err) {
+      if (code !== 0) {
+        channelsView.error = root.lastLine(err) || "Could not add that channel"
+        return
+      }
+      channelsView.clearInput()
+      root.loadChannels()
+      root.loadCached()
+      root.refresh()
+    }
+  }
+
+  FreshTubeCommand {
+    id: removeCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      if (code !== 0) channelsView.error = root.lastLine(err) || "Could not remove that channel"
+      root.loadChannels()
+      root.loadCached()
+    }
+  }
+
   FeedPopup {
     id: popup
     anchorItem: root.anchorItem
@@ -281,6 +354,13 @@ Panel {
       id: videosView
       anchors.fill: parent
       visible: root.view === "videos"
+      host: root
+    }
+
+    ChannelsView {
+      id: channelsView
+      anchors.fill: parent
+      visible: root.view === "channels"
       host: root
     }
   }

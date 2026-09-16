@@ -107,6 +107,14 @@ Item {
           fontFamily: view.family
           onClicked: view.host.togglePin()
         }
+
+        Button {
+          iconText: "󰕲"
+          tooltipText: "Channels"
+          foreground: view.fg
+          fontFamily: view.family
+          onClicked: view.host.showChannels()
+        }
       }
     }
 
@@ -153,12 +161,14 @@ Item {
     anchors.centerIn: parent
     width: parent.width
     visible: view.rows.length === 0
-    spacing: Style.space(4)
+    spacing: Style.space(6)
+
+    readonly property bool noChannels: view.host && view.host.channelCount === 0
 
     Text {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
-      text: "Nothing new"
+      text: empty.noChannels ? "Paste a channel URL to start" : "Nothing new"
       textFormat: Text.PlainText
       color: view.fg
       font.family: view.family
@@ -168,12 +178,23 @@ Item {
     Text {
       width: parent.width
       horizontalAlignment: Text.AlignHCenter
-      visible: text !== ""
+      visible: !empty.noChannels && text !== ""
       text: view.host && view.host.fetchedAt !== "" ? "updated " + Model.formatClock(view.host.fetchedAt) : ""
       textFormat: Text.PlainText
       color: view.dim
       font.family: view.family
       font.pixelSize: Style.font.caption
+    }
+
+    Button {
+      anchors.horizontalCenter: parent.horizontalCenter
+      visible: empty.noChannels
+      text: "Add channel"
+      iconText: "󰐕"
+      bordered: true
+      foreground: view.fg
+      fontFamily: view.family
+      onClicked: view.host.showChannels()
     }
   }
 }
