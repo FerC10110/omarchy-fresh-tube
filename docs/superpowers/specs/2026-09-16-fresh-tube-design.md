@@ -358,7 +358,7 @@ de mínimos de tarjeta y el thumbnail.
 
 ## Pruebas
 
-Python (`pytest`, sin red; `urlopen` y `subprocess.run` mockeados):
+Python (`unittest`, no hay pytest en la máquina; sin red: `urlopen`, `fetch_url`, `fetch_feed` y `subprocess.run` mockeados):
 
 - `test_feed.py`: parseo del fixture `feed.xml` (nombre, último por fecha
   aunque no sea el primero, thumbnail, `recent`), feed vacío, XML inválido.
@@ -400,8 +400,8 @@ omarchy plugin enable io.github.ferc10110.fresh-tube
 ```
 
 Guardar cualquier archivo del plugin recarga el código. Los tests Python corren
-con `python -m pytest tests/` desde la carpeta del plugin; los de Node con
-`node --test tests/model.test.js`.
+con `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v` desde
+la carpeta del plugin; los de Node con `node --test tests/model.test.js`.
 
 ## Fuera de alcance de esta versión
 
