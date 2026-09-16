@@ -3,7 +3,7 @@ import unittest
 
 import support
 from fresh_tube import store
-from fresh_tube.errors import DUPLICATE, UNKNOWN, USAGE, FreshTubeError
+from fresh_tube.errors import DUPLICATE, PIN_LIMIT, UNKNOWN, USAGE, FreshTubeError
 
 LTT = "UCXuqSBlHAE6Xw-yeJA0Tunw"
 
@@ -88,7 +88,8 @@ PARSED = {"name": "Example",
 class State(StoreTest):
     def test_missing_state_has_defaults(self):
         self.assertEqual(store.load_state(), {"version": 1, "seen": [], "feeds": {}, "fetchedAt": "",
-                                              "prefs": {"width": 420, "height": 520, "pinned": False}})
+                                              "prefs": {"width": 420, "height": 520, "pinned": False},
+                                              "pins": []})
 
     def test_save_and_reload(self):
         state = store.load_state()
@@ -164,3 +165,60 @@ class Feeds(StoreTest):
         self.assertEqual(videos[1]["thumbnail"], "https://i/new.jpg")
         store.mark_seen(state, "later")
         self.assertEqual([v["videoId"] for v in store.unseen_videos(state, channels)], ["new"])
+
+    @staticmethod
+    def pin(video_id, channel_id="UC1"):
+        return {"videoId": video_id, "title": "T " + video_id, "channelId": channel_id, "channel": "One",
+                "published": "2026-09-15T10:00:00+00:00", "thumbnail": "", "url": store.WATCH_URL.format(video_id)}
+
+    def test_pins_are_capped_at_three_and_survive_reload(self):
+        state = store.load_state()
+        for n in range(3):
+            store.pin_video(state, self.pin(f"p{n}"))
+        with self.assertRaises(FreshTubeError) as caught:
+            store.pin_video(state, self.pin("p3"))
+        self.assertEqual(caught.exception.code, PIN_LIMIT)
+        self.assertEqual(str(caught.exception), "Pin limit reached (3)")
+        store.pin_video(state, self.pin("p1"))  # already pinned: no-op, no error
+        store.save_state(state)
+        self.assertEqual([p["videoId"] for p in store.load_state()["pins"]], ["p0", "p1", "p2"])
+
+    def test_unpin(self):
+        state = store.load_state()
+        store.pin_video(state, self.pin("p0"))
+        self.assertEqual(store.unpin_video(state, "p0"), [])
+        with self.assertRaises(FreshTubeError) as caught:
+            store.unpin_video(state, "p0")
+        self.assertEqual(caught.exception.code, UNKNOWN)
+        self.assertEqual(str(caught.exception), "That video is not pinned")
+
+    def test_invalid_saved_pins_are_dropped_on_load(self):
+        self.box.write_json(self.box.state_file, {"pins": [self.pin("ok"), {"title": "no id"}, "junk",
+                                                           {"videoId": ""}, self.pin("a"), self.pin("b"),
+                                                           self.pin("c")]})
+        self.assertEqual([p["videoId"] for p in store.load_state()["pins"]], ["ok", "a", "b"])
+
+    def test_pinned_videos_are_not_new_and_not_pruned(self):
+        channels = [{"id": "UC1", "name": "One"}]
+        state = store.load_state()
+        store.update_feed(state, "UC1", {"name": "One", "latest": {"videoId": "v1", "title": "First",
+                                          "published": "2026-09-15T10:00:00+00:00", "thumbnail": "th"},
+                                          "recent": ["v1"]}, "t1")
+        video = store.find_latest(state, channels, "v1")
+        self.assertEqual(video, {"videoId": "v1", "title": "First", "channelId": "UC1", "channel": "One",
+                                 "published": "2026-09-15T10:00:00+00:00", "thumbnail": "th",
+                                 "url": "https://www.youtube.com/watch?v=v1"})
+        self.assertIsNone(store.find_latest(state, channels, "nope"))
+        store.pin_video(state, video)
+        self.assertEqual(store.unseen_videos(state, channels), [])
+        self.assertEqual(store.pinned_videos(state), [video])
+        store.mark_seen(state, "v1")
+        store.update_feed(state, "UC1", {"name": "One", "latest": {"videoId": "v2", "title": "Second",
+                                          "published": "2026-09-16T10:00:00+00:00", "thumbnail": ""},
+                                          "recent": ["v2"]}, "t2")
+        store.prune_seen(state)
+        self.assertEqual(state["seen"], ["v1"])
+        store.unpin_video(state, "v1")
+        store.prune_seen(state)
+        self.assertEqual(state["seen"], [])
+        self.assertEqual([v["videoId"] for v in store.unseen_videos(state, channels)], ["v2"])

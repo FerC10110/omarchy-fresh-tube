@@ -5,7 +5,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from . import feed, resolve, store
-from .errors import DUPLICATE, USAGE, FreshTubeError
+from .errors import DUPLICATE, UNKNOWN, USAGE, FreshTubeError
 
 
 def emit(data):
@@ -99,8 +99,9 @@ def refresh_all(channels, cached):
         message = (state["feeds"].get(channel["id"]) or {}).get("lastError", "")
         if message:
             errors.append({"channelId": channel["id"], "channel": channel.get("name", ""), "message": message})
-    return {"videos": store.unseen_videos(state, channels), "fetchedAt": state["fetchedAt"],
-            "offline": offline, "channelCount": len(channels), "errors": errors}
+    return {"videos": store.unseen_videos(state, channels), "pinned": store.pinned_videos(state),
+            "fetchedAt": state["fetchedAt"], "offline": offline, "channelCount": len(channels),
+            "errors": errors}
 
 
 def cmd_refresh(args):
@@ -118,6 +119,30 @@ def cmd_seen(args):
     store.mark_seen(state, args.video_id)
     store.save_state(state)
     emit({"seen": args.video_id})
+    return 0
+
+
+def cmd_pin(args):
+    channels = store.load_channels()
+    state = store.load_state()
+    video = store.find_latest(state, channels, args.video_id)
+    if video is None:
+        # Re-pinning something already pinned must work even after its channel moved on.
+        already = [p for p in state["pins"] if p["videoId"] == args.video_id]
+        if not already:
+            raise FreshTubeError("No such video", UNKNOWN)
+        video = already[0]
+    store.pin_video(state, video)
+    store.save_state(state)
+    emit({"pinned": store.pinned_videos(state)})
+    return 0
+
+
+def cmd_unpin(args):
+    state = store.load_state()
+    store.unpin_video(state, args.video_id)
+    store.save_state(state)
+    emit({"pinned": store.pinned_videos(state)})
     return 0
 
 
@@ -157,6 +182,14 @@ def build_parser():
     p = sub.add_parser("seen", help="mark a video as seen")
     p.add_argument("video_id")
     p.set_defaults(func=cmd_seen)
+
+    p = sub.add_parser("pin", help="keep a video listed even after watching it (at most 3)")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_pin)
+
+    p = sub.add_parser("unpin", help="stop keeping a video pinned")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_unpin)
 
     p = sub.add_parser("prefs", help="read or change the popup preferences (width, height, pinned)")
     p.add_argument("action", choices=["get", "set"])

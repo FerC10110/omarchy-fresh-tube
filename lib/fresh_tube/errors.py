@@ -5,6 +5,7 @@ USAGE = 2
 NETWORK = 3
 DUPLICATE = 4
 UNKNOWN = 5
+PIN_LIMIT = 6
 
 
 class FreshTubeError(Exception):

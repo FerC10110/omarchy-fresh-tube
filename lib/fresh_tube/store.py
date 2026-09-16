@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 
-from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
+from .errors import DUPLICATE, GENERAL, PIN_LIMIT, UNKNOWN, USAGE, FreshTubeError
 
 APP = "fresh-tube"
 CHANNELS_VERSION = 1
@@ -110,11 +110,13 @@ def remove_channel(channels, channel_id):
 
 DEFAULT_PREFS = {"width": 420, "height": 520, "pinned": False}
 PREF_LIMITS = {"width": (300, 4000), "height": (220, 4000)}
+MAX_PINS = 3
 WATCH_URL = "https://www.youtube.com/watch?v={}"
 
 
 def empty_state():
-    return {"version": STATE_VERSION, "seen": [], "feeds": {}, "fetchedAt": "", "prefs": dict(DEFAULT_PREFS)}
+    return {"version": STATE_VERSION, "seen": [], "feeds": {}, "fetchedAt": "",
+            "prefs": dict(DEFAULT_PREFS), "pins": []}
 
 
 def _valid_pref(key, value):
@@ -129,6 +131,11 @@ def _valid_pref(key, value):
         # pinned: must be a real bool.
         return isinstance(value, bool)
     return False
+
+
+def _valid_pin(entry):
+    """A saved pin is usable when it is an object with a non-empty videoId."""
+    return isinstance(entry, dict) and isinstance(entry.get("videoId"), str) and entry["videoId"] != ""
 
 
 def load_state():
@@ -147,6 +154,8 @@ def load_state():
         for key in DEFAULT_PREFS:
             if key in prefs and _valid_pref(key, prefs[key]):
                 state["prefs"][key] = prefs[key]
+    if isinstance(data.get("pins"), list):
+        state["pins"] = [dict(p) for p in data["pins"] if _valid_pin(p)][:MAX_PINS]
     return state
 
 
@@ -180,10 +189,11 @@ def mark_seen(state, video_id):
 
 
 def prune_seen(state):
-    """Forget seen ids that no cached feed lists any more; they can never show up again."""
+    """Forget seen ids that no cached feed lists any more, unless they are pinned."""
     keep = set()
     for feed in state["feeds"].values():
         keep.update(feed.get("recent") or [])
+    keep.update(pinned_ids(state))
     state["seen"] = [s for s in state["seen"] if s in keep]
 
 
@@ -202,18 +212,60 @@ def drop_feed(state, channel_id):
     state["feeds"].pop(channel_id, None)
 
 
+def video_record(channel, latest):
+    """The public shape of a video, shared by the new-video list and the pins."""
+    return {"videoId": latest["videoId"], "title": latest.get("title", ""),
+            "channelId": channel["id"], "channel": channel.get("name", ""),
+            "published": latest.get("published", ""), "thumbnail": latest.get("thumbnail", ""),
+            "url": WATCH_URL.format(latest["videoId"])}
+
+
 def unseen_videos(state, channels):
-    """The newest video of every channel whose newest video was not seen, newest first."""
-    seen = set(state["seen"])
+    """The newest video of every channel whose newest video was not seen or pinned, newest first."""
+    skip = set(state["seen"]) | pinned_ids(state)
     videos = []
     for channel in channels:
         feed = state["feeds"].get(channel["id"]) or {}
         latest = feed.get("latest")
-        if not latest or latest.get("videoId") in seen:
+        if not latest or latest.get("videoId") in skip:
             continue
-        videos.append({"videoId": latest["videoId"], "title": latest.get("title", ""),
-                       "channelId": channel["id"], "channel": channel.get("name", ""),
-                       "published": latest.get("published", ""), "thumbnail": latest.get("thumbnail", ""),
-                       "url": WATCH_URL.format(latest["videoId"])})
+        videos.append(video_record(channel, latest))
     videos.sort(key=lambda v: v["published"], reverse=True)
     return videos
+
+
+def find_latest(state, channels, video_id):
+    """The full record of a video that is currently some channel's newest, or None."""
+    for channel in channels:
+        latest = (state["feeds"].get(channel["id"]) or {}).get("latest")
+        if latest and latest.get("videoId") == video_id:
+            return video_record(channel, latest)
+    return None
+
+
+def pinned_ids(state):
+    return {p["videoId"] for p in state.get("pins", [])}
+
+
+def pinned_videos(state):
+    return [dict(p) for p in state.get("pins", [])]
+
+
+def pin_video(state, video):
+    """Keep a video around regardless of seen/newest; at most MAX_PINS, re-pinning is a no-op."""
+    pins = state.setdefault("pins", [])
+    if any(p["videoId"] == video["videoId"] for p in pins):
+        return pins
+    if len(pins) >= MAX_PINS:
+        raise FreshTubeError(f"Pin limit reached ({MAX_PINS})", PIN_LIMIT)
+    pins.append(dict(video))
+    return pins
+
+
+def unpin_video(state, video_id):
+    pins = state.setdefault("pins", [])
+    kept = [p for p in pins if p["videoId"] != video_id]
+    if len(kept) == len(pins):
+        raise FreshTubeError("That video is not pinned", UNKNOWN)
+    state["pins"] = kept
+    return kept

@@ -175,7 +175,7 @@ class Refresh(CliTest):
     def test_no_channels(self):
         self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})
         payload = self.refresh(fetch=mock.Mock(side_effect=AssertionError("network")))
-        self.assertEqual(payload, {"videos": [], "fetchedAt": "", "offline": False, "channelCount": 0, "errors": []})
+        self.assertEqual(payload, {"videos": [], "pinned": [], "fetchedAt": "", "offline": False, "channelCount": 0, "errors": []})
 
     def test_plain_refresh_prints_one_line_per_video(self):
         with mock.patch("fresh_tube.feed.fetch_feed", side_effect=self.two_feeds), support.captured() as (out, err):
@@ -219,3 +219,90 @@ class Prefs(CliTest):
         self.assertIn("between 220 and 4000", self.fails(2, "prefs", "set", "height", "10"))
         self.assertIn("Unknown preference", self.fails(2, "prefs", "set", "color", "red"))
         self.assertIn("needs a key and a value", self.fails(2, "prefs", "set", "width"))
+
+
+class Pins(CliTest):
+    def setUp(self):
+        super().setUp()
+        self.box.apply()
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": [
+            {"id": "UC1", "name": "One", "url": "u1", "addedAt": "t"},
+            {"id": "UC2", "name": "Two", "url": "u2", "addedAt": "t"}]})
+
+    def refresh(self, *extra, fetch=None):
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=fetch or Refresh.two_feeds), \
+             support.captured() as (out, err):
+            code = cli.main(["refresh", "--json", *extra])
+        self.assertEqual(code, 0, err.getvalue())
+        return json.loads(out.getvalue())
+
+    def call(self, *argv):
+        with support.captured() as (out, err):
+            code = cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def pin(self, video_id):
+        code, out, err = self.call("pin", video_id)
+        self.assertEqual(code, 0, err)
+        return [p["videoId"] for p in json.loads(out)["pinned"]]
+
+    def test_pin_moves_a_video_from_new_to_pinned_even_after_watching(self):
+        self.refresh()
+        self.assertEqual(self.pin("v2"), ["v2"])
+        payload = self.refresh("--cached")
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+        self.assertEqual(payload["pinned"][0]["channel"], "Two")
+        self.assertEqual(payload["pinned"][0]["url"], "https://www.youtube.com/watch?v=v2")
+        self.assertEqual(self.call("seen", "v2")[0], 0)
+        self.assertEqual([p["videoId"] for p in self.refresh("--cached")["pinned"]], ["v2"])
+        self.assertEqual(self.pin("v2"), ["v2"])  # re-pin is a no-op
+
+    def test_pinned_video_survives_the_channel_moving_on_and_being_removed(self):
+        self.refresh()
+        self.pin("v2")
+
+        def moved_on(channel_id, timeout=10):
+            if channel_id == "UC2":
+                return {"name": "Two", "latest": {"videoId": "v3", "title": "Third", "thumbnail": "",
+                                                  "published": "2026-09-17T10:00:00+00:00"}, "recent": ["v3", "v2"]}
+            return Refresh.two_feeds(channel_id, timeout)
+
+        payload = self.refresh(fetch=moved_on)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v3", "v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+        self.assertEqual(self.pin("v2"), ["v2"])  # still pinnable although no longer the newest
+        self.assertEqual(self.call("remove", "UC2")[0], 0)
+        payload = self.refresh("--cached")
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+
+    def test_unpin_applies_the_normal_rules(self):
+        self.refresh()
+        self.pin("v2")
+        self.call("seen", "v2")
+        code, out, err = self.call("unpin", "v2")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["pinned"], [])
+        self.assertEqual([v["videoId"] for v in self.refresh("--cached")["videos"]], ["v1"])
+        self.pin("v1")
+        self.assertEqual(self.call("unpin", "v1")[0], 0)
+        self.assertEqual([v["videoId"] for v in self.refresh("--cached")["videos"]], ["v1"])
+
+    def test_pin_errors(self):
+        self.refresh()
+        code, out, err = self.call("pin", "nope")
+        self.assertEqual(code, 5)
+        self.assertIn("No such video", err)
+        code, out, err = self.call("unpin", "v1")
+        self.assertEqual(code, 5)
+        self.assertIn("That video is not pinned", err)
+        state = store.load_state()
+        for n in range(3):
+            store.pin_video(state, {"videoId": f"p{n}", "title": "", "channelId": "UCx", "channel": "",
+                                    "published": "", "thumbnail": "", "url": ""})
+        store.save_state(state)
+        code, out, err = self.call("pin", "v1")
+        self.assertEqual(code, 6)
+        self.assertIn("Pin limit reached (3)", err)
+        self.assertEqual(len(store.load_state()["pins"]), 3)
