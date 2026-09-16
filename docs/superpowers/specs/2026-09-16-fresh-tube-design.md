@@ -87,7 +87,8 @@ readily). Exit codes:
 | 2 | uso o entrada inválida (URL que no parece de YouTube, prefs con valor inválido) |
 | 3 | red o resolución (no se pudo bajar la página o el feed, canal no encontrado) |
 | 4 | duplicado (el canal ya estaba) |
-| 5 | canal desconocido (remove de un id que no existe) |
+| 5 | id desconocido (remove de un canal que no existe, pin de un video que no es el último de ningún canal, unpin de uno que no está pineado) |
+| 6 | límite de pins (ya hay 3 videos pineados) |
 
 ### Comandos
 
@@ -118,7 +119,8 @@ Resolución (`resolve.py`):
    modos para cachear el último video.
 
 `remove <channel_id>`
-Quita el canal de `channels.json` y su entrada de `state.json.feeds`. Imprime
+Quita el canal de `channels.json` y su entrada de `state.json.feeds`. Los
+videos pineados de ese canal se conservan (se despinean a mano). Imprime
 `{"removed": "<id>"}`.
 
 `channels --json`
@@ -149,6 +151,10 @@ Con `--cached`: no toca la red, devuelve lo que hay en `state.json`.
    "thumbnail": "https://i4.ytimg.com/vi/3xngArcFpek/hqdefault.jpg",
    "url": "https://www.youtube.com/watch?v=3xngArcFpek"}
  ],
+ "pinned": [
+  {"videoId": "…", "title": "…", "channelId": "UC…", "channel": "…",
+   "published": "…", "thumbnail": "…", "url": "…"}
+ ],
  "fetchedAt": "2026-09-16T14:05:00+00:00",
  "offline": false,
  "channelCount": 5,
@@ -156,12 +162,23 @@ Con `--cached`: no toca la red, devuelve lo que hay en `state.json`.
 ```
 
 `videos` contiene, por cada canal, su video más reciente si su id no está en
-`seen`, ordenados por `published` descendente. `offline` es `true` con
+`seen` ni en `pins`, ordenados por `published` descendente. `pinned` son los
+videos pineados en el orden en que se pinearon, con la misma forma que
+`videos`, estén vistos o no. `offline` es `true` con
 `--cached` o cuando todos los canales fallaron por red. `fetchedAt` es el
 último refresco de red exitoso (puede ser viejo si estamos offline).
 
 `seen <video_id>`
 Agrega el id al set `seen`. Imprime `{"seen": "<id>"}`. Idempotente.
+
+`pin <video_id>` y `unpin <video_id>`
+`pin` guarda en `state.json.pins` el registro completo del video (el que hoy
+es el más reciente de algún canal, o uno ya pineado), así sigue existiendo
+aunque el canal publique otro. Máximo 3: con la lista llena responde exit 6
+"Pin limit reached (3)"; un id que no es el último de ningún canal ni está
+pineado responde exit 5 "No such video"; volver a pinear uno pineado es un
+no-op. `unpin` lo quita de `pins` (exit 5 "That video is not pinned" si no
+estaba). Ambos imprimen `{"pinned": [...]}` con la lista resultante.
 
 `prefs get` y `prefs set <key> <value>`
 Claves: `width` (int, 300..4000), `height` (int, 220..4000), `pinned`
@@ -192,13 +209,16 @@ filtran: el RSS no los distingue.
                      "latest": {"videoId": "…", "title": "…", "published": "…", "thumbnail": "…"},
                      "recent": ["id1", "id2", "…"]}},
    "fetchedAt": "…",
-   "prefs": {"width": 420, "height": 520, "pinned": false}}
+   "prefs": {"width": 420, "height": 520, "pinned": false},
+   "pins": [{"videoId": "…", "title": "…", "channelId": "UC…", "channel": "…",
+             "published": "…", "thumbnail": "…", "url": "…"}]}
   ```
 
 Escritura atómica: archivo temporal en el mismo directorio + `os.replace`.
 Un archivo ausente equivale a vacío; un archivo corrupto se reporta con exit 1
 y no se sobreescribe. Poda de `seen`: se conservan solo los ids que aparecen
-en la unión de todos los `recent`. Fechas siempre en UTC con
+en la unión de todos los `recent` o en `pins`. `pins` guarda como máximo 3
+registros completos; al cargar se descartan entradas sin `videoId`. Fechas siempre en UTC con
 `datetime.now(timezone.utc)`, nunca `utcnow()`.
 
 ## Widget de barra (`BarWidget.qml`)
@@ -298,6 +318,31 @@ en canales; `↑`/`↓` mueven `selected`; `Enter` reproduce el seleccionado;
   es un paste.
 - Al entrar a la vista, el foco va al campo.
 
+## Videos pineados
+
+Para dejar fijo un video que se ve varias veces (música) o a lo largo de
+varios días (uno largo), sin que desaparezca al reproducirlo.
+
+- Cada fila tiene un botón de pin (`󰐃`, marcado cuando está pineado) al lado
+  del `✕`; aparece al pasar el mouse y queda siempre visible en las filas
+  pineadas. `P` con el panel abierto pinea o despinea la fila resaltada.
+- Las filas pineadas van primero, en el orden en que se pinearon, y después
+  los videos nuevos. Reproducir un video pineado lo marca visto igual que
+  siempre, pero la fila no desaparece mientras esté pineado. En las filas
+  pineadas no se muestra el `✕`: se sacan despineando.
+- Despinear aplica la regla normal: si ya se reprodujo, desaparece; si no,
+  vuelve a la lista de nuevos (siempre que siga siendo el último de su canal).
+- Con 3 pineados, el botón de pin de las demás filas queda deshabilitado y al
+  pasar el mouse dice "Pin limit reached (3)".
+- El contador del icono cuenta solo `videos` (los nuevos), no los pineados.
+  El icono queda atenuado si no hay nuevos, aunque haya pineados.
+- Los pineados se muestran también con `--cached` y sin red, porque viven en
+  `state.json`. Quitar un canal no los borra.
+- El panel guarda `pinnedVideos` aparte de `videos`; `pin`/`unpin` se lanzan
+  por un runner propio (`pinCmd`, 30 s) y al terminar se aplica la lista
+  `pinned` que devuelve el CLI. Un error del CLI se muestra como aviso y la
+  lista no cambia.
+
 ## Popup (`FeedPopup.qml`)
 
 `PanelWindow` layer-shell a pantalla completa con la tarjeta adentro, como
@@ -349,6 +394,9 @@ de mínimos de tarjeta y el thumbnail.
 | URL que no es de YouTube | exit 2, "That doesn't look like a YouTube channel". |
 | Canal inexistente o página sin id | exit 3, "Couldn't find that channel". |
 | Canal duplicado | exit 4, "Already added". |
+| Cuarto pin | exit 6, "Pin limit reached (3)"; el botón de pin ya estaba deshabilitado en la UI. |
+| `pin` de un video que ya no es el último de su canal y no está pineado | exit 5, "No such video". |
+| Canal quitado con videos pineados | Los pineados siguen en la lista hasta que se despinean. |
 | `mpv` ausente | `playerFound = false`; al hacer click, aviso "mpv not found (playerCommand)"; no se marca visto. |
 | Comando colgado | El runner lo mata a los 30 s y muestra "fresh-tube took too long". |
 | `state.json` corrupto | exit 1 con mensaje; el archivo no se toca. Se puede borrar a mano. |
@@ -366,9 +414,14 @@ Python (`unittest`, no hay pytest en la máquina; sin red: `urlopen`, `fetch_url
   `itemprop` en `watch_page.html`, `@handle` a secas, fallback a yt-dlp cuando
   el HTML no tiene id, entrada que no es de YouTube.
 - `test_store.py`: add, duplicado, remove, remove desconocido, seen idempotente,
-  poda de seen, prefs válidas e inválidas, escritura atómica, corrupto.
+  poda de seen, prefs válidas e inválidas, escritura atómica, corrupto; pins:
+  límite de 3, re-pin no-op, unpin, entradas inválidas descartadas al cargar,
+  pineados fuera de `unseen_videos` y a salvo de la poda.
 - `test_cli.py`: cada comando vía `main()` con `capsys`: forma del JSON,
-  exit codes, `refresh --cached` sin red, ordering de `videos`, `offline`.
+  exit codes, `refresh --cached` sin red, ordering de `videos`, `offline`;
+  `pin`/`unpin`: `pinned` en el payload, visto pero pineado sigue, sobrevive a
+  que el canal publique otro, despinear aplica la regla normal, límite (exit 6),
+  id desconocido (exit 5), `remove` conserva pins.
 
 Node (`node --test tests/model.test.js`):
 
@@ -391,6 +444,10 @@ QML, checklist manual sobre la barra real (hot-reload al guardar):
 7. Sin red (`nmcli networking off`): aviso offline y lista intacta.
 8. Teclado: `↑`/`↓`/`Enter`/`Delete`/`Esc`.
 9. Contador en la barra baja al descartar y sube tras `omarchy-shell io.github.ferc10110.fresh-tube refresh`.
+10. Pin: `󰐃` en una fila la manda arriba; reproducirla no la saca; el contador
+    no la cuenta; `omarchy restart shell` la trae pineada; despinear tras verla
+    la hace desaparecer. Con 3 pineados, el pin de las otras filas está
+    deshabilitado con "Pin limit reached (3)". `P` pinea la fila resaltada.
 
 ## Instalación y desarrollo
 

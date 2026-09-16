@@ -3895,3 +3895,378 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_011DPqvBbwQCc2wPWRZoVQkC
 EOF
 ```
+
+---
+
+### Task 14: Videos pineados (backend): `pins` en state.json, `pin`/`unpin`, `pinned` en refresh
+
+Agregado tras la aprobación del usuario del 2026-09-16 (sección "Videos pineados" del spec).
+
+**Files:**
+- Modify: `lib/fresh_tube/errors.py` (agregar `PIN_LIMIT = 6`)
+- Modify: `lib/fresh_tube/store.py` (pins; `unseen_videos` y `prune_seen` los respetan)
+- Modify: `lib/fresh_tube/cli.py` (`pin`, `unpin`, `"pinned"` en el payload de `refresh`)
+- Modify: `tests/test_store.py` (ajustar `test_missing_state_has_defaults`; agregar al final de `State`)
+- Modify: `tests/test_cli.py` (agregar al final)
+
+**Interfaces:**
+- Consumes: `store.*` y `cli.*` de las Tareas 2 a 8.
+- Produces: `errors.PIN_LIMIT = 6`; `store.MAX_PINS = 3`; `store.video_record(channel, latest) -> dict` (la forma pública `{videoId,title,channelId,channel,published,thumbnail,url}`); `store.pinned_ids(state) -> set`; `store.pinned_videos(state) -> list[dict]` (copias, en orden de pineo); `store.find_latest(state, channels, video_id) -> dict|None`; `store.pin_video(state, video) -> list` (no-op si ya estaba; lanza `PIN_LIMIT` "Pin limit reached (3)"); `store.unpin_video(state, video_id) -> list` (lanza `UNKNOWN` "That video is not pinned"); `state["pins"]` en `empty_state()`/`load_state()` (entradas sin `videoId` descartadas, máximo 3); `unseen_videos` excluye pineados; `prune_seen` conserva pineados. CLI: `pin <video_id>` y `unpin <video_id>` imprimen `{"pinned": [...]}`; `pin` de un id que no es `latest` de ningún canal ni está pineado → exit 5 "No such video"; `refresh --json` agrega `"pinned": store.pinned_videos(state)`.
+
+- [ ] **Step 1: Tests de store (fallan)**
+
+En `tests/test_store.py`, sumar `PIN_LIMIT` al import de `fresh_tube.errors`, cambiar el esperado de `test_missing_state_has_defaults` para que incluya `"pins": []`:
+
+```python
+    def test_missing_state_has_defaults(self):
+        self.assertEqual(store.load_state(), {"version": 1, "seen": [], "feeds": {}, "fetchedAt": "",
+                                              "prefs": {"width": 420, "height": 520, "pinned": False},
+                                              "pins": []})
+```
+
+y agregar al final de la clase `State`:
+
+```python
+    @staticmethod
+    def pin(video_id, channel_id="UC1"):
+        return {"videoId": video_id, "title": "T " + video_id, "channelId": channel_id, "channel": "One",
+                "published": "2026-09-15T10:00:00+00:00", "thumbnail": "", "url": store.WATCH_URL.format(video_id)}
+
+    def test_pins_are_capped_at_three_and_survive_reload(self):
+        state = store.load_state()
+        for n in range(3):
+            store.pin_video(state, self.pin(f"p{n}"))
+        with self.assertRaises(FreshTubeError) as caught:
+            store.pin_video(state, self.pin("p3"))
+        self.assertEqual(caught.exception.code, PIN_LIMIT)
+        self.assertEqual(str(caught.exception), "Pin limit reached (3)")
+        store.pin_video(state, self.pin("p1"))  # already pinned: no-op, no error
+        store.save_state(state)
+        self.assertEqual([p["videoId"] for p in store.load_state()["pins"]], ["p0", "p1", "p2"])
+
+    def test_unpin(self):
+        state = store.load_state()
+        store.pin_video(state, self.pin("p0"))
+        self.assertEqual(store.unpin_video(state, "p0"), [])
+        with self.assertRaises(FreshTubeError) as caught:
+            store.unpin_video(state, "p0")
+        self.assertEqual(caught.exception.code, UNKNOWN)
+        self.assertEqual(str(caught.exception), "That video is not pinned")
+
+    def test_invalid_saved_pins_are_dropped_on_load(self):
+        self.box.write_json(self.box.state_file, {"pins": [self.pin("ok"), {"title": "no id"}, "junk",
+                                                           {"videoId": ""}, self.pin("a"), self.pin("b"),
+                                                           self.pin("c")]})
+        self.assertEqual([p["videoId"] for p in store.load_state()["pins"]], ["ok", "a", "b"])
+
+    def test_pinned_videos_are_not_new_and_not_pruned(self):
+        channels = [{"id": "UC1", "name": "One"}]
+        state = store.load_state()
+        store.update_feed(state, "UC1", {"name": "One", "latest": {"videoId": "v1", "title": "First",
+                                          "published": "2026-09-15T10:00:00+00:00", "thumbnail": "th"},
+                                          "recent": ["v1"]}, "t1")
+        video = store.find_latest(state, channels, "v1")
+        self.assertEqual(video, {"videoId": "v1", "title": "First", "channelId": "UC1", "channel": "One",
+                                 "published": "2026-09-15T10:00:00+00:00", "thumbnail": "th",
+                                 "url": "https://www.youtube.com/watch?v=v1"})
+        self.assertIsNone(store.find_latest(state, channels, "nope"))
+        store.pin_video(state, video)
+        self.assertEqual(store.unseen_videos(state, channels), [])
+        self.assertEqual(store.pinned_videos(state), [video])
+        store.mark_seen(state, "v1")
+        store.update_feed(state, "UC1", {"name": "One", "latest": {"videoId": "v2", "title": "Second",
+                                          "published": "2026-09-16T10:00:00+00:00", "thumbnail": ""},
+                                          "recent": ["v2"]}, "t2")
+        store.prune_seen(state)
+        self.assertEqual(state["seen"], ["v1"])
+        store.unpin_video(state, "v1")
+        store.prune_seen(state)
+        self.assertEqual(state["seen"], [])
+        self.assertEqual([v["videoId"] for v in store.unseen_videos(state, channels)], ["v2"])
+```
+
+- [ ] **Step 2: Correr y ver que fallan**
+
+Run: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -k store -v`
+Expected: `ImportError: cannot import name 'PIN_LIMIT'`.
+
+- [ ] **Step 3: Implementar errors.py y store.py**
+
+`lib/fresh_tube/errors.py`: agregar después de `UNKNOWN = 5`:
+
+```python
+PIN_LIMIT = 6
+```
+
+`lib/fresh_tube/store.py`: sumar `PIN_LIMIT` al import de `.errors`; agregar después de `PREF_LIMITS`:
+
+```python
+MAX_PINS = 3
+```
+
+reemplazar `empty_state`:
+
+```python
+def empty_state():
+    return {"version": STATE_VERSION, "seen": [], "feeds": {}, "fetchedAt": "",
+            "prefs": dict(DEFAULT_PREFS), "pins": []}
+```
+
+agregar después de `_valid_pref`:
+
+```python
+def _valid_pin(entry):
+    """A saved pin is usable when it is an object with a non-empty videoId."""
+    return isinstance(entry, dict) and isinstance(entry.get("videoId"), str) and entry["videoId"] != ""
+```
+
+en `load_state`, después del bloque de `prefs` y antes del `return state`:
+
+```python
+    if isinstance(data.get("pins"), list):
+        state["pins"] = [dict(p) for p in data["pins"] if _valid_pin(p)][:MAX_PINS]
+```
+
+reemplazar `prune_seen`:
+
+```python
+def prune_seen(state):
+    """Forget seen ids that no cached feed lists any more, unless they are pinned."""
+    keep = set()
+    for feed in state["feeds"].values():
+        keep.update(feed.get("recent") or [])
+    keep.update(pinned_ids(state))
+    state["seen"] = [s for s in state["seen"] if s in keep]
+```
+
+y reemplazar `unseen_videos` por este bloque (que además agrega las funciones nuevas):
+
+```python
+def video_record(channel, latest):
+    """The public shape of a video, shared by the new-video list and the pins."""
+    return {"videoId": latest["videoId"], "title": latest.get("title", ""),
+            "channelId": channel["id"], "channel": channel.get("name", ""),
+            "published": latest.get("published", ""), "thumbnail": latest.get("thumbnail", ""),
+            "url": WATCH_URL.format(latest["videoId"])}
+
+
+def unseen_videos(state, channels):
+    """The newest video of every channel whose newest video was not seen or pinned, newest first."""
+    skip = set(state["seen"]) | pinned_ids(state)
+    videos = []
+    for channel in channels:
+        feed = state["feeds"].get(channel["id"]) or {}
+        latest = feed.get("latest")
+        if not latest or latest.get("videoId") in skip:
+            continue
+        videos.append(video_record(channel, latest))
+    videos.sort(key=lambda v: v["published"], reverse=True)
+    return videos
+
+
+def find_latest(state, channels, video_id):
+    """The full record of a video that is currently some channel's newest, or None."""
+    for channel in channels:
+        latest = (state["feeds"].get(channel["id"]) or {}).get("latest")
+        if latest and latest.get("videoId") == video_id:
+            return video_record(channel, latest)
+    return None
+
+
+def pinned_ids(state):
+    return {p["videoId"] for p in state.get("pins", [])}
+
+
+def pinned_videos(state):
+    return [dict(p) for p in state.get("pins", [])]
+
+
+def pin_video(state, video):
+    """Keep a video around regardless of seen/newest; at most MAX_PINS, re-pinning is a no-op."""
+    pins = state.setdefault("pins", [])
+    if any(p["videoId"] == video["videoId"] for p in pins):
+        return pins
+    if len(pins) >= MAX_PINS:
+        raise FreshTubeError(f"Pin limit reached ({MAX_PINS})", PIN_LIMIT)
+    pins.append(dict(video))
+    return pins
+
+
+def unpin_video(state, video_id):
+    pins = state.setdefault("pins", [])
+    kept = [p for p in pins if p["videoId"] != video_id]
+    if len(kept) == len(pins):
+        raise FreshTubeError("That video is not pinned", UNKNOWN)
+    state["pins"] = kept
+    return kept
+```
+
+- [ ] **Step 4: Correr los tests de store**
+
+Run: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -k store -v`
+Expected: PASS (los 4 nuevos y los anteriores).
+
+- [ ] **Step 5: Tests del CLI (fallan)**
+
+Al final de `tests/test_cli.py`:
+
+```python
+class Pins(CliTest):
+    def setUp(self):
+        super().setUp()
+        self.box.apply()
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": [
+            {"id": "UC1", "name": "One", "url": "u1", "addedAt": "t"},
+            {"id": "UC2", "name": "Two", "url": "u2", "addedAt": "t"}]})
+
+    def refresh(self, *extra, fetch=None):
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=fetch or Refresh.two_feeds), \
+             support.captured() as (out, err):
+            code = cli.main(["refresh", "--json", *extra])
+        self.assertEqual(code, 0, err.getvalue())
+        return json.loads(out.getvalue())
+
+    def call(self, *argv):
+        with support.captured() as (out, err):
+            code = cli.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def pin(self, video_id):
+        code, out, err = self.call("pin", video_id)
+        self.assertEqual(code, 0, err)
+        return [p["videoId"] for p in json.loads(out)["pinned"]]
+
+    def test_pin_moves_a_video_from_new_to_pinned_even_after_watching(self):
+        self.refresh()
+        self.assertEqual(self.pin("v2"), ["v2"])
+        payload = self.refresh("--cached")
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+        self.assertEqual(payload["pinned"][0]["channel"], "Two")
+        self.assertEqual(payload["pinned"][0]["url"], "https://www.youtube.com/watch?v=v2")
+        self.assertEqual(self.call("seen", "v2")[0], 0)
+        self.assertEqual([p["videoId"] for p in self.refresh("--cached")["pinned"]], ["v2"])
+        self.assertEqual(self.pin("v2"), ["v2"])  # re-pin is a no-op
+
+    def test_pinned_video_survives_the_channel_moving_on_and_being_removed(self):
+        self.refresh()
+        self.pin("v2")
+
+        def moved_on(channel_id, timeout=10):
+            if channel_id == "UC2":
+                return {"name": "Two", "latest": {"videoId": "v3", "title": "Third", "thumbnail": "",
+                                                  "published": "2026-09-17T10:00:00+00:00"}, "recent": ["v3", "v2"]}
+            return Refresh.two_feeds(channel_id, timeout)
+
+        payload = self.refresh(fetch=moved_on)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v3", "v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+        self.assertEqual(self.pin("v2"), ["v2"])  # still pinnable although no longer the newest
+        self.assertEqual(self.call("remove", "UC2")[0], 0)
+        payload = self.refresh("--cached")
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v1"])
+        self.assertEqual([p["videoId"] for p in payload["pinned"]], ["v2"])
+
+    def test_unpin_applies_the_normal_rules(self):
+        self.refresh()
+        self.pin("v2")
+        self.call("seen", "v2")
+        code, out, err = self.call("unpin", "v2")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["pinned"], [])
+        self.assertEqual([v["videoId"] for v in self.refresh("--cached")["videos"]], ["v1"])
+        self.pin("v1")
+        self.assertEqual(self.call("unpin", "v1")[0], 0)
+        self.assertEqual([v["videoId"] for v in self.refresh("--cached")["videos"]], ["v1"])
+
+    def test_pin_errors(self):
+        self.refresh()
+        code, out, err = self.call("pin", "nope")
+        self.assertEqual(code, 5)
+        self.assertIn("No such video", err)
+        code, out, err = self.call("unpin", "v1")
+        self.assertEqual(code, 5)
+        self.assertIn("That video is not pinned", err)
+        state = store.load_state()
+        for n in range(3):
+            store.pin_video(state, {"videoId": f"p{n}", "title": "", "channelId": "UCx", "channel": "",
+                                    "published": "", "thumbnail": "", "url": ""})
+        store.save_state(state)
+        code, out, err = self.call("pin", "v1")
+        self.assertEqual(code, 6)
+        self.assertIn("Pin limit reached (3)", err)
+        self.assertEqual(len(store.load_state()["pins"]), 3)
+```
+
+- [ ] **Step 6: Correr y ver que fallan**
+
+Run: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -k Pins -v`
+Expected: `SystemExit: 2` (argparse no conoce `pin`) y `KeyError: 'pinned'`.
+
+- [ ] **Step 7: Implementar en cli.py**
+
+Sumar `UNKNOWN` al import de `.errors` si no está. En `refresh_all`, el `return` pasa a:
+
+```python
+    return {"videos": store.unseen_videos(state, channels), "pinned": store.pinned_videos(state),
+            "fetchedAt": state["fetchedAt"], "offline": offline, "channelCount": len(channels),
+            "errors": errors}
+```
+
+Agregar después de `cmd_seen`:
+
+```python
+def cmd_pin(args):
+    channels = store.load_channels()
+    state = store.load_state()
+    video = store.find_latest(state, channels, args.video_id)
+    if video is None:
+        # Re-pinning something already pinned must work even after its channel moved on.
+        already = [p for p in state["pins"] if p["videoId"] == args.video_id]
+        if not already:
+            raise FreshTubeError("No such video", UNKNOWN)
+        video = already[0]
+    store.pin_video(state, video)
+    store.save_state(state)
+    emit({"pinned": store.pinned_videos(state)})
+    return 0
+
+
+def cmd_unpin(args):
+    state = store.load_state()
+    store.unpin_video(state, args.video_id)
+    store.save_state(state)
+    emit({"pinned": store.pinned_videos(state)})
+    return 0
+```
+
+Y en `build_parser`, después del subparser `seen`:
+
+```python
+    p = sub.add_parser("pin", help="keep a video listed even after watching it (at most 3)")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_pin)
+
+    p = sub.add_parser("unpin", help="stop keeping a video pinned")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_unpin)
+```
+
+- [ ] **Step 8: Suite completa, validate y commit**
+
+Run:
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v 2>&1 | tail -3
+omarchy plugin validate . ; echo "validate exit=$?"
+```
+Expected: `OK` con 8 tests más que antes; `validate exit=0`.
+
+```bash
+git add lib/fresh_tube/errors.py lib/fresh_tube/store.py lib/fresh_tube/cli.py tests/test_store.py tests/test_cli.py
+git commit -F - <<'MSG'
+Pin up to three videos so watching them does not hide them
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011DPqvBbwQCc2wPWRZoVQkC
+MSG
+```
