@@ -2,10 +2,12 @@
 import json
 import os
 import shlex
+import socket
 import subprocess
 import time
 
 from .errors import GENERAL, USAGE, FreshTubeError
+from .page import EMBED_URL
 from .store import state_dir
 from .videos import WATCH_URL
 
@@ -20,7 +22,7 @@ BIN_PATH = os.path.join(PLUGIN_DIR, "bin", "fresh-tube")
 # Chromium-family browsers that accept --app and --user-data-dir.
 BROWSERS = frozenset(["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave", "brave-browser",
                       "vivaldi", "vivaldi-stable", "microsoft-edge", "microsoft-edge-stable", "helium", "opera"])
-EMBED_URL = "https://www.youtube.com/embed/{}?autoplay=1"
+PAGE_URL = "http://127.0.0.1:{}/"
 YOUTUBE_URL = "https://www.youtube.com/"
 
 # Module-level so tests can replace them.
@@ -49,8 +51,9 @@ def browser_flags():
     return [f"--user-data-dir={os.path.join(state_dir(), 'browser')}", "--no-first-run", "--no-default-browser-check"]
 
 
-def build_argv(player_command, video_id, size, fallback=None):
-    """The full command line: mpv gets the companion script, the size and resume; a browser gets app mode; others only the URL."""
+def build_argv(player_command, video_id, size, fallback=None, port=None):
+    """The full command line: mpv gets the companion script, the size and resume; a browser gets app mode on the
+    page served at `port` (the embed itself without one); others only the URL."""
     argv = player_argv(player_command)
     if is_mpv(argv):
         argv += ["--save-position-on-quit", "--force-window=immediate",
@@ -60,8 +63,9 @@ def build_argv(player_command, video_id, size, fallback=None):
             argv.append(f"--script-opt=fresh_tube-fallback={fallback}")
         return argv + [WATCH_URL.format(video_id)]
     if is_browser(argv):
+        page = PAGE_URL.format(port) if port else EMBED_URL.format(video_id)
         return argv + browser_flags() + ["--autoplay-policy=no-user-gesture-required",
-                                         f"--window-size={size[0]},{size[1]}", f"--app={EMBED_URL.format(video_id)}"]
+                                         f"--window-size={size[0]},{size[1]}", f"--app={page}"]
     return argv + [WATCH_URL.format(video_id)]
 
 
@@ -131,19 +135,41 @@ def launch(argv):
         raise FreshTubeError(f"Could not start {os.path.basename(argv[0])}: {reason}", GENERAL)
 
 
+def open_port():
+    """A listening socket on a free loopback port for the page that embeds the player; None if none can be had."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        return sock
+    except OSError:
+        return None
+
+
 def start(player_command, video_id, size, fallback=None):
     """Launch the player, then a detached helper that places its window; returns the player's pid."""
-    argv = build_argv(player_command, video_id, size, fallback)
-    process = launch(argv)
-    helper = [BIN_PATH, "place-window", str(process.pid)]
-    if is_browser(argv):
-        # Browsers do not keep --window-size once floated, and have no script to remember their size.
-        helper += ["--resize", f"{size[0]}x{size[1]}", "--watch"]
+    browser = is_browser(player_argv(player_command))
+    sock = open_port() if browser else None
     try:
-        popen(helper, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-              start_new_session=True)
-    except OSError:
-        pass  # the video plays anyway, just not placed
+        argv = build_argv(player_command, video_id, size, fallback, sock.getsockname()[1] if sock else None)
+        process = launch(argv)
+        helper = [BIN_PATH, "place-window", str(process.pid)]
+        options = {}
+        if browser:
+            # Browsers do not keep --window-size once floated, and have no script to remember their size.
+            helper += ["--resize", f"{size[0]}x{size[1]}", "--watch"]
+        if sock:
+            # The helper serves the page on this socket for as long as the window lives.
+            helper += ["--serve", str(sock.fileno()), "--video", video_id]
+            options["pass_fds"] = (sock.fileno(),)
+        try:
+            popen(helper, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  start_new_session=True, **options)
+        except OSError:
+            pass  # the video plays anyway, just not placed
+    finally:
+        if sock:
+            sock.close()
     return process.pid
 
 

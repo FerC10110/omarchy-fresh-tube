@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import unittest
 from unittest import mock
 
@@ -92,6 +93,18 @@ class Browser(unittest.TestCase):
         self.assertIn("--window-size=480,270", argv)
         self.assertEqual(argv[-1], "--app=https://www.youtube.com/embed/4_fM3Nv8BB0?autoplay=1")
         self.assertNotIn(URL, argv)
+
+    def test_browser_opens_the_local_page_when_it_has_a_port(self):
+        argv = play.build_argv("chromium", VID, (480, 270), port=4321)
+        self.assertEqual(argv[-1], "--app=http://127.0.0.1:4321/")
+        self.assertFalse(any("youtube.com" in arg for arg in argv))
+
+    def test_open_port_listens_on_loopback(self):
+        sock = play.open_port()
+        self.addCleanup(sock.close)
+        host, port = sock.getsockname()
+        self.assertEqual(host, "127.0.0.1")
+        self.assertGreater(port, 0)
 
     def test_browser_options_come_first(self):
         argv = play.build_argv("brave --incognito", VID, (480, 270))
@@ -273,15 +286,30 @@ class PlayCommand(unittest.TestCase):
         self.assertIn("That doesn't look like a YouTube video", err)
         self.assertEqual(self.spawned, [])
 
-    def test_a_browser_gets_the_embed_and_a_watching_placer(self):
-        code, out, err = self.run_play("--player", "chromium", "--", VID)
+    def test_a_browser_gets_the_local_page_and_a_serving_placer(self):
+        sock = play.open_port()
+        self.addCleanup(sock.close)
+        port, fd = sock.getsockname()[1], sock.fileno()
+        with mock.patch("fresh_tube.play.open_port", return_value=sock):
+            code, out, err = self.run_play("--player", "chromium", "--", VID)
         self.assertEqual(code, 0, err)
         player, placer = self.spawned
         self.assertEqual(player[0][0], "chromium")
-        self.assertEqual(player[0][-1], "--app=https://www.youtube.com/embed/4_fM3Nv8BB0?autoplay=1")
+        self.assertEqual(player[0][-1], f"--app=http://127.0.0.1:{port}/")
         self.assertIn("--window-size=480,270", player[0])
-        self.assertEqual(placer[0], [play.BIN_PATH, "place-window", "4242", "--resize", "480x270", "--watch"])
+        self.assertNotIn("pass_fds", player[1])
+        self.assertEqual(placer[0], [play.BIN_PATH, "place-window", "4242", "--resize", "480x270", "--watch",
+                                     "--serve", str(fd), "--video", VID])
+        self.assertEqual(placer[1]["pass_fds"], (fd,))
+        self.assertEqual(sock.fileno(), -1)  # handed to the helper, closed here
         self.assertIn(VID, self.box.read_json(self.box.state_file)["seen"])
+
+    def test_without_a_free_port_the_browser_gets_the_embed_itself(self):
+        with mock.patch("fresh_tube.play.open_port", return_value=None):
+            self.run_play("--player", "chromium", "--", VID)
+        player, placer = self.spawned
+        self.assertEqual(player[0][-1], "--app=https://www.youtube.com/embed/4_fM3Nv8BB0?autoplay=1")
+        self.assertEqual(placer[0], [play.BIN_PATH, "place-window", "4242", "--resize", "480x270", "--watch"])
 
     def test_browser_uses_its_own_remembered_size(self):
         state = store.load_state()
@@ -290,7 +318,7 @@ class PlayCommand(unittest.TestCase):
         store.save_state(state)
         self.run_play("--player", "chromium", "--", VID)
         self.assertIn("--window-size=700,400", self.spawned[0][0])
-        self.assertEqual(self.spawned[1][0][-3:], ["--resize", "700x400", "--watch"])
+        self.assertEqual(self.spawned[1][0][3:6], ["--resize", "700x400", "--watch"])
         self.spawned.clear()
         self.run_play("--", VID)
         self.assertIn("--geometry=1000x560", self.spawned[0][0])
@@ -353,6 +381,29 @@ class PlaceWindowCommand(unittest.TestCase):
         with support.captured():
             self.assertEqual(cli.main(["place-window", "x"]), 2)
             self.assertEqual(cli.main(["place-window", "7", "--resize", "big"]), 2)
+
+
+    def test_serve_hands_the_socket_and_video_to_the_page_server(self):
+        fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM).detach()
+        server = mock.Mock()
+        with mock.patch("fresh_tube.page.serve", return_value=server) as serve, support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--watch", "--serve", str(fd), "--video", VID]), 0)
+        served, video = serve.call_args[0]
+        self.addCleanup(served.close)
+        self.assertEqual((served.fileno(), video), (fd, VID))
+        self.watch.assert_called_once()
+        server.shutdown.assert_called_once()
+        server.server_close.assert_called_once()
+
+    def test_serve_needs_a_video_id(self):
+        with support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--serve", "3"]), 2)
+            self.assertEqual(cli.main(["place-window", "7", "--serve", "3", "--video", "nope"]), 2)
+
+    def test_a_bad_serve_fd_is_a_general_error(self):
+        with support.captured() as (out, err):
+            self.assertEqual(cli.main(["place-window", "7", "--serve", "999", "--video", VID]), 1)
+        self.assertIn("Could not serve the player page", err.getvalue())
 
 
 class LoginCommand(unittest.TestCase):

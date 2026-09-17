@@ -1,10 +1,11 @@
 """fresh-tube: the latest unseen video of the YouTube channels you pick."""
 import argparse
 import json
+import socket
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from . import feed, play, resolve, store, videos, ytdlp
+from . import feed, page, play, resolve, store, videos, ytdlp
 from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
 
 
@@ -237,22 +238,35 @@ def size_arg(text):
 
 def cmd_place_window(args):
     """Hidden helper spawned by `play`: wait for the player's window, put it below the bar, and for browsers
-    size it and remember the size it closes with."""
-    window = play.find_window(args.pid)
-    if window is None:
+    serve the page that embeds the player, size the window and remember the size it closes with."""
+    server = None
+    if args.serve is not None:
+        if not videos.VIDEO_ID_RE.match(args.video or ""):
+            raise FreshTubeError("--serve needs --video with a YouTube video id", USAGE)
+        try:
+            server = page.serve(socket.socket(fileno=args.serve), args.video)
+        except OSError as e:
+            raise FreshTubeError(f"Could not serve the player page: {e.strerror or e}", GENERAL)
+    try:
+        window = play.find_window(args.pid)
+        if window is None:
+            return 0
+        play.place_window(window)
+        if args.resize:
+            play.resize_window(window, args.resize)
+        if args.watch:
+            size = play.watch_window(window, args.pid)
+            if size:
+                try:
+                    with store.state_transaction() as state:
+                        store.set_prefs(state, [("browserWidth", str(size[0])), ("browserHeight", str(size[1]))])
+                except FreshTubeError:
+                    pass  # a size outside the allowed range is not worth remembering
         return 0
-    play.place_window(window)
-    if args.resize:
-        play.resize_window(window, args.resize)
-    if args.watch:
-        size = play.watch_window(window, args.pid)
-        if size:
-            try:
-                with store.state_transaction() as state:
-                    store.set_prefs(state, [("browserWidth", str(size[0])), ("browserHeight", str(size[1]))])
-            except FreshTubeError:
-                pass  # a size outside the allowed range is not worth remembering
-    return 0
+    finally:
+        if server:
+            server.shutdown()
+            server.server_close()
 
 
 def cmd_login(args):
@@ -335,6 +349,8 @@ def build_parser():
     p.add_argument("pid", type=int)
     p.add_argument("--resize", type=size_arg, default=None)
     p.add_argument("--watch", action="store_true")
+    p.add_argument("--serve", type=int, default=None, metavar="FD")
+    p.add_argument("--video", default=None)
     p.set_defaults(func=cmd_place_window)
 
     p = sub.add_parser("login", help="open the fallback browser on YouTube so you can sign in")

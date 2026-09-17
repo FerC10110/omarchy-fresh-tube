@@ -47,7 +47,15 @@ Para esos, el argv es:
     --no-first-run --no-default-browser-check
     --autoplay-policy=no-user-gesture-required
     --window-size=<W>,<H>
-    --app=https://www.youtube.com/embed/<videoId>?autoplay=1
+    --app=http://127.0.0.1:<puerto>/
+
+El reproductor embebido de YouTube exige una cabecera `Referer` (sin ella muestra el error 153),
+así que `play` no abre el embed directamente: abre un socket en `127.0.0.1` con un puerto libre,
+lanza el navegador con `--app=http://127.0.0.1:<puerto>/` y le pasa el socket al helper
+(`place-window <pid> … --serve <fd> --video <videoId>`), que sirve una página mínima (fondo negro,
+un `<iframe>` a pantalla completa con `https://www.youtube.com/embed/<videoId>?autoplay=1`) desde
+un hilo mientras vigila la ventana; al cerrarse la ventana termina el helper y con él el servidor.
+Si no se consigue puerto, el navegador recibe el embed directo (degradado: error 153).
 
 `W`/`H` son las preferencias `browserWidth`/`browserHeight` (enteros 200–8000, en píxeles
 lógicos porque Chromium mide `--window-size` así); si no existen, `W` = `width / scale` del
