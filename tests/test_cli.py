@@ -250,7 +250,7 @@ class Refresh(CliTest):
     def test_no_channels(self):
         self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})
         payload = self.refresh(fetch=mock.Mock(side_effect=AssertionError("network")))
-        self.assertEqual(payload, {"videos": [], "pinned": [], "fetchedAt": "", "offline": False, "channelCount": 0, "errors": []})
+        self.assertEqual(payload, {"videos": [], "pinned": [], "queue": [], "fetchedAt": "", "offline": False, "channelCount": 0, "errors": []})
 
     def test_plain_refresh_prints_one_line_per_video(self):
         with mock.patch("fresh_tube.feed.fetch_feed", side_effect=self.two_feeds), support.captured() as (out, err):
@@ -294,6 +294,9 @@ class Prefs(CliTest):
         self.assertIn("between 220 and 4000", self.fails(2, "prefs", "set", "height", "10"))
         self.assertIn("Unknown preference", self.fails(2, "prefs", "set", "color", "red"))
         self.assertIn("needs a key and a value", self.fails(2, "prefs", "set", "width"))
+        self.assertEqual(self.json("prefs", "set", "playerWidth", "860", "playerHeight", "484")["playerHeight"], 484)
+        self.assertIn("between 200 and 8000", self.fails(2, "prefs", "set", "playerWidth", "900", "playerHeight", "10"))
+        self.assertEqual(self.json("prefs", "get")["playerWidth"], 860)
 
 
 class UnexpectedErrors(CliTest):
@@ -394,3 +397,70 @@ class Pins(CliTest):
         self.assertEqual(code, 6)
         self.assertIn("Pin limit reached (3)", err)
         self.assertEqual(len(store.load_state()["pins"]), 3)
+
+
+META = {"title": "A title", "channel": "Some Channel", "thumbnail": "https://i.ytimg.com/vi/v/hqdefault.jpg"}
+VID = "4_fM3Nv8BB0"
+
+
+class Queue(CliTest):
+    def setUp(self):
+        super().setUp()
+        self.box.apply()
+
+    def add(self, text, meta=None, error=None):
+        kw = {"side_effect": error} if error else {"return_value": meta or META}
+        with mock.patch("fresh_tube.videos.fetch_metadata", **kw), support.captured() as (out, err):
+            code = cli.main(["queue", "add", "--", text])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_add_prints_the_record_and_appends(self):
+        code, out, err = self.add("https://youtu.be/" + VID)
+        self.assertEqual(code, 0, err)
+        record = json.loads(out)
+        self.assertEqual((record["videoId"], record["title"], record["channel"]), (VID, "A title", "Some Channel"))
+        self.assertEqual(record["url"], "https://www.youtube.com/watch?v=" + VID)
+        code, out, err = self.add("abcdefghijk", meta=dict(META, title="Second"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual([q["videoId"] for q in self.json("queue", "--json")["queue"]], [VID, "abcdefghijk"])
+
+    def test_add_rejects_non_videos_and_duplicates(self):
+        with mock.patch("fresh_tube.videos.fetch_metadata", side_effect=AssertionError("no lookup")):
+            with support.captured() as (out, err):
+                self.assertEqual(cli.main(["queue", "add", "--", "https://www.youtube.com/@LinusTechTips"]), 2)
+            self.assertIn("That doesn't look like a YouTube video", err.getvalue())
+        self.add(VID)
+        with mock.patch("fresh_tube.videos.fetch_metadata", side_effect=AssertionError("no lookup")):
+            with support.captured() as (out, err):
+                self.assertEqual(cli.main(["queue", "add", "--", VID]), 4)
+            self.assertIn("Already in the list", err.getvalue())
+
+    def test_add_without_metadata_is_a_network_error(self):
+        code, out, err = self.add(VID, error=FreshTubeError("oembed: HTTP 404; yt-dlp: not installed", NETWORK))
+        self.assertEqual(code, 3)
+        self.assertIn("oembed: HTTP 404; yt-dlp: not installed", err)
+        self.assertEqual(self.json("queue", "--json"), {"queue": []})
+
+    def test_move_and_plain_listing(self):
+        self.add("v1v1v1v1v1v")
+        self.add("v2v2v2v2v2v", meta=dict(META, title="Two"))
+        payload = self.json("queue", "move", "--", "v2v2v2v2v2v", "0")
+        self.assertEqual([q["videoId"] for q in payload["queue"]], ["v2v2v2v2v2v", "v1v1v1v1v1v"])
+        self.assertIn("Not in the list", self.fails(5, "queue", "move", "--", "nope", "0"))
+        self.assertIn("whole number", self.fails(2, "queue", "move", "--", "v1v1v1v1v1v", "x"))
+        self.assertEqual(self.ok("queue").splitlines()[0], "Some Channel: Two  https://www.youtube.com/watch?v=v2v2v2v2v2v")
+
+    def test_done_removes_and_marks_seen_idempotently(self):
+        self.add(VID)
+        self.assertEqual(self.json("done", "--", VID), {"done": VID, "removed": True})
+        self.assertEqual(self.json("done", "--", VID), {"done": VID, "removed": False})
+        self.assertEqual(self.json("queue", "--json"), {"queue": []})
+        self.assertIn(VID, self.box.read_json(self.box.state_file)["seen"])
+
+    def test_refresh_payload_carries_the_queue(self):
+        self.add(VID)
+        self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})
+        with mock.patch("fresh_tube.feed.fetch_feed", side_effect=AssertionError("network")), \
+             support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh", "--json", "--cached"]), 0, err.getvalue())
+        self.assertEqual([q["videoId"] for q in json.loads(out.getvalue())["queue"]], [VID])

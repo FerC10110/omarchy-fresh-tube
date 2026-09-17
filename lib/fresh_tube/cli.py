@@ -4,7 +4,7 @@ import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from . import feed, resolve, store, ytdlp
+from . import feed, resolve, store, videos, ytdlp
 from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
 
 
@@ -122,6 +122,7 @@ def refresh_all(channels, cached):
         if message:
             errors.append({"channelId": channel["id"], "channel": channel.get("name", ""), "message": message})
     return {"videos": store.unseen_videos(state, channels), "pinned": store.pinned_videos(state),
+            "queue": list(state.get("queue", [])),
             "fetchedAt": state["fetchedAt"], "offline": offline, "channelCount": len(channels),
             "errors": errors}
 
@@ -168,12 +169,65 @@ def cmd_unpin(args):
     return 0
 
 
+def queue_payload(state):
+    return {"queue": list(state.get("queue", []))}
+
+
+def cmd_queue(args):
+    if args.action == "add":
+        if not args.value:
+            raise FreshTubeError("queue add needs a video URL or id", USAGE)
+        video_id = videos.video_id_from(args.value)
+        if not video_id:
+            raise FreshTubeError("That doesn't look like a YouTube video", USAGE)
+        if video_id in store.queue_ids(store.load_state()):
+            raise FreshTubeError("Already in the list", DUPLICATE)
+        # Network first, file last, like `add`.
+        meta = videos.fetch_metadata(video_id)
+        state = store.load_state()
+        record = store.queue_record(video_id, meta)
+        store.queue_add(state, record)
+        store.save_state(state)
+        emit(record)
+        return 0
+    if args.action == "move":
+        if not args.value or args.position is None:
+            raise FreshTubeError("queue move needs a video id and a position", USAGE)
+        try:
+            index = int(args.position)
+        except ValueError:
+            raise FreshTubeError("position must be a whole number", USAGE)
+        state = store.load_state()
+        store.queue_move(state, args.value, index)
+        store.save_state(state)
+        emit(queue_payload(state))
+        return 0
+    state = store.load_state()
+    if args.json:
+        emit(queue_payload(state))
+        return 0
+    for q in state["queue"]:
+        print(f"{q['channel']}: {q['title']}  {q['url']}")
+    return 0
+
+
+def cmd_done(args):
+    """Finished with a video: out of the list, and seen."""
+    state = store.load_state()
+    removed = store.queue_remove(state, args.video_id)
+    store.mark_seen(state, args.video_id)
+    store.save_state(state)
+    emit({"done": args.video_id, "removed": removed})
+    return 0
+
+
 def cmd_prefs(args):
     state = store.load_state()
     if args.action == "set":
-        if args.key is None or args.value is None:
+        pairs = args.pairs
+        if not pairs or len(pairs) % 2 != 0:
             raise FreshTubeError("prefs set needs a key and a value", USAGE)
-        store.set_pref(state, args.key, args.value)
+        store.set_prefs(state, list(zip(pairs[0::2], pairs[1::2])))
         store.save_state(state)
     emit(state["prefs"])
     return 0
@@ -213,11 +267,21 @@ def build_parser():
     p.add_argument("video_id")
     p.set_defaults(func=cmd_unpin)
 
-    p = sub.add_parser("prefs", help="read or change the popup preferences (width, height, pinned)")
+    p = sub.add_parser("prefs", help="read or change the preferences (width, height, pinned, playerWidth, playerHeight)")
     p.add_argument("action", choices=["get", "set"])
-    p.add_argument("key", nargs="?")
-    p.add_argument("value", nargs="?")
+    p.add_argument("pairs", nargs="*", metavar="key value")
     p.set_defaults(func=cmd_prefs)
+
+    p = sub.add_parser("queue", help="the Watch later list: `queue add <url>`, `queue move <id> <pos>`, `queue --json`")
+    p.add_argument("action", nargs="?", choices=["add", "move"])
+    p.add_argument("value", nargs="?", help="video URL or id")
+    p.add_argument("position", nargs="?", help="new index for `move`, from 0")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_queue)
+
+    p = sub.add_parser("done", help="finished with a video: out of the Watch later list, and seen")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_done)
 
     return parser, sub
 
