@@ -5,7 +5,7 @@ import shlex
 import subprocess
 import time
 
-from .errors import GENERAL, FreshTubeError
+from .errors import GENERAL, USAGE, FreshTubeError
 from .videos import WATCH_URL
 
 DEFAULT_SIZE = (860, 484)
@@ -23,7 +23,10 @@ monotonic = time.monotonic
 
 
 def player_argv(player_command):
-    return shlex.split(player_command or "") or ["mpv"]
+    try:
+        return shlex.split(player_command or "") or ["mpv"]
+    except ValueError as e:
+        raise FreshTubeError(f"Could not start the player: {e}", USAGE)
 
 
 def is_mpv(argv):

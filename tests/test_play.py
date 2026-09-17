@@ -5,6 +5,7 @@ from unittest import mock
 
 import support
 from fresh_tube import cli, play, store
+from fresh_tube.errors import USAGE, FreshTubeError
 
 VID = "4_fM3Nv8BB0"
 URL = "https://www.youtube.com/watch?v=" + VID
@@ -43,6 +44,12 @@ class Argv(unittest.TestCase):
 
     def test_empty_command_means_mpv(self):
         self.assertEqual(play.build_argv("", VID, (860, 484))[0], "mpv")
+
+    def test_unbalanced_quotes_are_a_usage_error(self):
+        with self.assertRaises(FreshTubeError) as caught:
+            play.build_argv('mpv "oops', VID, (860, 484))
+        self.assertTrue(str(caught.exception).startswith("Could not start the player"))
+        self.assertEqual(caught.exception.code, USAGE)
 
 
 class DefaultSize(unittest.TestCase):
