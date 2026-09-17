@@ -35,10 +35,11 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   you watch over several days. Unpin it when you are done.
 - The `Watch later` tab is your own list: paste a video link (watch, youtu.be,
   shorts, embed or live) and it lands at the bottom with its title, channel
-  and thumbnail. Drag a row up or down to reorder (press on its thumbnail or title
-  and move), or press `Ctrl+↑` / `Ctrl+↓`. A video leaves the list when mpv reaches its end; close mpv early
-  and it stays, resuming where you left off next time. `✕` or `Delete` marks
-  it seen and removes it. `Ctrl+Tab` switches tabs.
+  and thumbnail. Drag a row up or down to reorder (press on its thumbnail or
+  title and move), or press `Ctrl+↑` / `Ctrl+↓`. A video leaves the list
+  when mpv reaches its end; close mpv early and it stays, resuming where you
+  left off next time. `✕` or `Delete` marks it seen and removes it.
+  `Ctrl+Tab` switches tabs.
 - Playing opens mpv as a small floating window below the bar, left-aligned, a
   quarter of the screen wide. Move or resize it as you like: the size is
   remembered for next time, the position resets. This needs Hyprland
