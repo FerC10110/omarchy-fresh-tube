@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 import unittest
 
 import support
@@ -302,6 +304,32 @@ class Queue(StoreTest):
         store.mark_seen(state, PARSED["latest"]["videoId"])
         self.assertEqual(store.unseen_videos(state, channels), [])
         self.assertEqual(store.queue_ids(state), [PARSED["latest"]["videoId"]])
+
+
+class Transactions(StoreTest):
+    def test_overlapping_transactions_both_land(self):
+        started = threading.Event()
+
+        def slow_writer():
+            with store.state_transaction() as state:
+                started.set()
+                time.sleep(0.3)
+                store.mark_seen(state, "slow")
+
+        worker = threading.Thread(target=slow_writer)
+        worker.start()
+        self.assertTrue(started.wait(2))
+        with store.state_transaction() as state:  # blocks until the slow writer has saved
+            store.mark_seen(state, "fast")
+        worker.join(2)
+        self.assertEqual(sorted(store.load_state()["seen"]), ["fast", "slow"])
+
+    def test_failed_transaction_saves_nothing(self):
+        with self.assertRaises(FreshTubeError):
+            with store.state_transaction() as state:
+                store.mark_seen(state, "x")
+                raise FreshTubeError("boom")
+        self.assertEqual(store.load_state()["seen"], [])
 
 
 class PlayerPrefs(StoreTest):

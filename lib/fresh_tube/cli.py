@@ -33,12 +33,11 @@ def cmd_add(args):
         channel = store.add_channel(channels, channel_id, resolve.handle_of(args.url) or channel_id,
                                     name_pending=True)
     store.save_channels(channels)
-    state = store.load_state()
-    if parsed is not None:
-        store.update_feed(state, channel_id, parsed, store.now_iso(), source)
-    else:
-        store.set_feed_error(state, channel_id, error)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        if parsed is not None:
+            store.update_feed(state, channel_id, parsed, store.now_iso(), source)
+        else:
+            store.set_feed_error(state, channel_id, error)
     emit(channel_payload(channel, state))
     return 0
 
@@ -47,10 +46,9 @@ def cmd_remove(args):
     channels = store.load_channels()
     store.remove_channel(channels, args.channel_id)
     store.save_channels(channels)
-    state = store.load_state()
-    store.drop_feed(state, args.channel_id)
-    store.prune_seen(state)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        store.drop_feed(state, args.channel_id)
+        store.prune_seen(state)
     emit({"removed": args.channel_id})
     return 0
 
@@ -93,28 +91,31 @@ def refresh_all(channels, cached):
     if channels and not cached:
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL_FETCHES) as pool:
             results = list(pool.map(fetch_one, channels))
-    # Load the state only now: the fetches took a while and the panel may have
-    # saved a preference or a seen video in the meantime.
-    state = store.load_state()
     if channels and not cached:
+        # Load the state only now: the fetches took a while and the panel may
+        # have saved a preference or a seen video in the meantime.
         now = store.now_iso()
         any_ok = False
         names = {}
-        for channel, (parsed, source, error) in zip(channels, results):
-            if parsed is not None:
-                store.update_feed(state, channel["id"], parsed, now, source)
-                names[channel["id"]] = parsed.get("name") or ""
-                any_ok = True
-            else:
-                store.set_feed_error(state, channel["id"], error)
-        if any_ok:
-            state["fetchedAt"] = now
-        store.prune_seen(state)
-        store.save_state(state)
+        with store.state_transaction() as state:
+            for channel, (parsed, source, error) in zip(channels, results):
+                if parsed is not None:
+                    store.update_feed(state, channel["id"], parsed, now, source)
+                    names[channel["id"]] = parsed.get("name") or ""
+                    any_ok = True
+                else:
+                    store.set_feed_error(state, channel["id"], error)
+            if any_ok:
+                state["fetchedAt"] = now
+            store.prune_seen(state)
         if store.fill_pending_names(channels, names):
             store.save_channels(channels)
         offline = not any_ok
     else:
+        # Load the state only now: there was nothing to fetch (or `--cached`
+        # skipped it), and the panel may have saved a preference or a seen
+        # video while we were deciding that.
+        state = store.load_state()
         offline = cached and bool(channels)
     errors = []
     for channel in channels:
@@ -138,33 +139,30 @@ def cmd_refresh(args):
 
 
 def cmd_seen(args):
-    state = store.load_state()
-    store.mark_seen(state, args.video_id)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        store.mark_seen(state, args.video_id)
     emit({"seen": args.video_id})
     return 0
 
 
 def cmd_pin(args):
     channels = store.load_channels()
-    state = store.load_state()
-    video = store.find_latest(state, channels, args.video_id)
-    if video is None:
-        # Re-pinning something already pinned must work even after its channel moved on.
-        already = [p for p in state["pins"] if p["videoId"] == args.video_id]
-        if not already:
-            raise FreshTubeError("No such video", UNKNOWN)
-        video = already[0]
-    store.pin_video(state, video)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        video = store.find_latest(state, channels, args.video_id)
+        if video is None:
+            # Re-pinning something already pinned must work even after its channel moved on.
+            already = [p for p in state["pins"] if p["videoId"] == args.video_id]
+            if not already:
+                raise FreshTubeError("No such video", UNKNOWN)
+            video = already[0]
+        store.pin_video(state, video)
     emit({"pinned": store.pinned_videos(state)})
     return 0
 
 
 def cmd_unpin(args):
-    state = store.load_state()
-    store.unpin_video(state, args.video_id)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        store.unpin_video(state, args.video_id)
     emit({"pinned": store.pinned_videos(state)})
     return 0
 
@@ -184,10 +182,9 @@ def cmd_queue(args):
             raise FreshTubeError("Already in the list", DUPLICATE)
         # Network first, file last, like `add`.
         meta = videos.fetch_metadata(video_id)
-        state = store.load_state()
         record = store.queue_record(video_id, meta)
-        store.queue_add(state, record)
-        store.save_state(state)
+        with store.state_transaction() as state:
+            store.queue_add(state, record)
         emit(record)
         return 0
     if args.action == "move":
@@ -197,9 +194,8 @@ def cmd_queue(args):
             index = int(args.position)
         except ValueError:
             raise FreshTubeError("position must be a whole number", USAGE)
-        state = store.load_state()
-        store.queue_move(state, args.value, index)
-        store.save_state(state)
+        with store.state_transaction() as state:
+            store.queue_move(state, args.value, index)
         emit(queue_payload(state))
         return 0
     state = store.load_state()
@@ -213,10 +209,9 @@ def cmd_queue(args):
 
 def cmd_done(args):
     """Finished with a video: out of the list, and seen."""
-    state = store.load_state()
-    removed = store.queue_remove(state, args.video_id)
-    store.mark_seen(state, args.video_id)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        removed = store.queue_remove(state, args.video_id)
+        store.mark_seen(state, args.video_id)
     emit({"done": args.video_id, "removed": removed})
     return 0
 
@@ -225,15 +220,14 @@ def cmd_play(args):
     """Launch the player for a video; seen only once the player is running."""
     if not videos.VIDEO_ID_RE.match(args.video_id or ""):
         raise FreshTubeError("That doesn't look like a YouTube video id", USAGE)
-    state = store.load_state()
-    prefs = state["prefs"]
-    if "playerWidth" in prefs and "playerHeight" in prefs:
-        size = (prefs["playerWidth"], prefs["playerHeight"])
-    else:
-        size = play.default_size(play.hyprctl("monitors"))
-    play.start(args.player, args.video_id, size)
-    store.mark_seen(state, args.video_id)
-    store.save_state(state)
+    with store.state_transaction() as state:
+        prefs = state["prefs"]
+        if "playerWidth" in prefs and "playerHeight" in prefs:
+            size = (prefs["playerWidth"], prefs["playerHeight"])
+        else:
+            size = play.default_size(play.hyprctl("monitors"))
+        play.start(args.player, args.video_id, size)
+        store.mark_seen(state, args.video_id)
     emit({"played": args.video_id})
     return 0
 
@@ -247,13 +241,14 @@ def cmd_place_window(args):
 
 
 def cmd_prefs(args):
-    state = store.load_state()
     if args.action == "set":
         pairs = args.pairs
         if not pairs or len(pairs) % 2 != 0:
             raise FreshTubeError("prefs set needs a key and a value", USAGE)
-        store.set_prefs(state, list(zip(pairs[0::2], pairs[1::2])))
-        store.save_state(state)
+        with store.state_transaction() as state:
+            store.set_prefs(state, list(zip(pairs[0::2], pairs[1::2])))
+    else:
+        state = store.load_state()
     emit(state["prefs"])
     return 0
 

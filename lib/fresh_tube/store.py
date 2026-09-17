@@ -1,5 +1,7 @@
 """channels.json and state.json: where Fresh Tube keeps what it knows."""
+import contextlib
 import datetime
+import fcntl
 import json
 import os
 import tempfile
@@ -187,6 +189,18 @@ def load_state():
 
 def save_state(state):
     write_json(state_path(), state)
+
+
+@contextlib.contextmanager
+def state_transaction():
+    """Load the state, hand it out, save it — under a lock, so two commands cannot lose each other's write."""
+    path = os.path.join(state_dir(), "state.lock")
+    os.makedirs(state_dir(), exist_ok=True)
+    with open(path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = load_state()
+        yield state
+        save_state(state)
 
 
 def set_pref(state, key, value):
