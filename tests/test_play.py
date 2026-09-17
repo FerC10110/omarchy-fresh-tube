@@ -67,6 +67,12 @@ class Placement(unittest.TestCase):
         mock.patch("fresh_tube.play.sleep").start()
         mock.patch("fresh_tube.play.pid_alive", return_value=True).start()
 
+    def test_ignores_a_window_before_it_is_mapped(self):
+        with mock.patch("fresh_tube.play.hyprctl",
+                         side_effect=[[dict(client(7), mapped=False)], [dict(client(7), mapped=True)]]) as hyprctl:
+            self.assertEqual(play.find_window(7), dict(client(7), mapped=True))
+        self.assertEqual(hyprctl.call_count, 2)
+
     def test_moves_below_the_bar_of_its_monitor(self):
         with mock.patch("fresh_tube.play.hyprctl", side_effect=lambda what: {"clients": [client(7)], "monitors": MONITORS}[what]):
             play.place_window(play.find_window(7))

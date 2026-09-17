@@ -120,7 +120,7 @@ def find_window(pid):
         if clients is None:
             return None
         for client in clients:
-            if isinstance(client, dict) and client.get("pid") == pid:
+            if isinstance(client, dict) and client.get("pid") == pid and client.get("mapped", True):
                 return client
         if not pid_alive(pid) or monotonic() >= deadline:
             return None
