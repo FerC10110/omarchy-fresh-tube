@@ -34,8 +34,8 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   listed after you play it, for the album you play all week or the long talk
   you watch over several days. Unpin it when you are done.
 - Middle-click the icon to refresh without opening.
-- Keyboard: ↑/↓ select, Enter plays, Delete dismisses, P pins, Ctrl+R
-  refreshes, Esc closes.
+- Keyboard: ↑/↓ select, Enter plays, Delete dismisses (not a pinned video),
+  P pins or unpins, Ctrl+R refreshes, Esc closes.
 
 Feeds refresh every 15 minutes, when the panel opens, and on demand.
 
@@ -63,6 +63,7 @@ o.bind("SUPER SHIFT", "Y", "omarchy-shell io.github.ferc10110.fresh-tube toggle"
 - `~/.config/fresh-tube/channels.json`: your channels.
 - `~/.local/state/fresh-tube/state.json`: seen videos, cached feeds, pinned
   videos, popup size and pin.
+- `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those locations.
 
 Everything comes from each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`): no API key, no login, and no
@@ -80,5 +81,5 @@ file in the plugin folder reloads it in the running shell; errors show in
 `quickshell log -p /usr/share/omarchy/shell -t 40`.
 
 The `bin/fresh-tube` script is usable on its own: `add`, `remove`, `channels`,
-`refresh [--cached]`, `seen`, `pin`, `unpin`, `prefs get|set`; add `--json` for
-machine output.
+`refresh [--cached]`, `seen`, `pin`, `unpin`, `prefs get|set`. `channels` and
+`refresh` take `--json` for machine output.
