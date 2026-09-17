@@ -1,5 +1,5 @@
 -- Fresh Tube's mpv companion. Loaded by `fresh-tube play` with
---   --script-opts=fresh_tube-id=<videoId>,fresh_tube-bin=<path to bin/fresh-tube>
+--   --script-opt=fresh_tube-id=<videoId> --script-opt=fresh_tube-bin=<path to bin/fresh-tube>
 -- It tells the plugin when the video reaches its end (so the video leaves the
 -- Watch later list) and remembers the window size when mpv closes.
 local mp = require("mp")

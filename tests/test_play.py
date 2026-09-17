@@ -27,7 +27,9 @@ class Argv(unittest.TestCase):
         self.assertIn("--force-window=immediate", argv)
         self.assertIn("--geometry=860x484", argv)
         self.assertIn("--script=" + play.SCRIPT_PATH, argv)
-        self.assertIn(f"--script-opts=fresh_tube-id={VID},fresh_tube-bin={play.BIN_PATH}", argv)
+        self.assertIn(f"--script-opt=fresh_tube-id={VID}", argv)
+        self.assertIn(f"--script-opt=fresh_tube-bin={play.BIN_PATH}", argv)
+        self.assertFalse(any(a.startswith("--script-opts=") for a in argv))
         self.assertTrue(play.SCRIPT_PATH.endswith(os.path.join("mpv", "fresh-tube.lua")))
         self.assertTrue(os.path.isabs(play.BIN_PATH))
 

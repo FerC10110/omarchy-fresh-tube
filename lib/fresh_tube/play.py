@@ -36,7 +36,7 @@ def build_argv(player_command, video_id, size):
     if is_mpv(argv):
         argv += ["--save-position-on-quit", "--force-window=immediate",
                  f"--geometry={size[0]}x{size[1]}", f"--script={SCRIPT_PATH}",
-                 f"--script-opts=fresh_tube-id={video_id},fresh_tube-bin={BIN_PATH}"]
+                 f"--script-opt=fresh_tube-id={video_id}", f"--script-opt=fresh_tube-bin={BIN_PATH}"]
     return argv + [WATCH_URL.format(video_id)]
 
 

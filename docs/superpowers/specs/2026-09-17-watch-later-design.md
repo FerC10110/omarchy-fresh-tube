@@ -33,7 +33,8 @@ pasa por un comando nuevo:
     `H` = `W` × 9 / 16; ancho lógico = `width / scale` de `hyprctl monitors -j`. Sin
     `hyprctl`, el default es 860×484.
   - `--script=<plugin>/mpv/fresh-tube.lua` y
-    `--script-opts=fresh_tube-id=<videoId>,fresh_tube-bin=<ruta absoluta de bin/fresh-tube>`.
+    `--script-opt=fresh_tube-id=<videoId>` `--script-opt=fresh_tube-bin=<ruta absoluta de bin/fresh-tube>`
+    (dos flags: `--script-opts` pisaría la lista del usuario).
 - Con otro reproductor solo se agrega la URL: no hay detección de fin ni tamaño recordado.
 - Si el lanzamiento falla (`FileNotFoundError`, `OSError`), imprime
   `fresh-tube: Could not start <nombre>: <motivo>` y sale con 1; nada se marca visto.
