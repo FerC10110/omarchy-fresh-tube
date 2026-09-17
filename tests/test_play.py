@@ -177,6 +177,29 @@ class Placement(unittest.TestCase):
         with mock.patch("fresh_tube.play.subprocess.run", return_value=mock.Mock(returncode=0, stdout="nope")):
             self.assertIsNone(play.hyprctl("monitors"))
 
+    def test_resize_dispatches_an_exact_size(self):
+        play.resize_window(client(7), (640, 360))
+        self.assertEqual(self.dispatches, [("resizewindowpixel", "exact 640 360,address:0x55aa")])
+
+    def test_watch_returns_the_last_size_once_the_window_is_gone(self):
+        polls = [[dict(client(7), size=[640, 360])], [dict(client(7), size=[700, 400])],
+                 [dict(client(8), address="0x99")]]
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=polls):
+            self.assertEqual(play.watch_window(client(7), 7), (700, 400))
+
+    def test_watch_ignores_bad_sizes_and_stops_when_the_player_dies(self):
+        polls = [[dict(client(7), size=[640, 360])], [dict(client(7), size=[0, 0])], [dict(client(7), size="x")]]
+        alive = iter([True, True, False])
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=polls), \
+             mock.patch("fresh_tube.play.pid_alive", side_effect=lambda pid: next(alive)):
+            self.assertEqual(play.watch_window(client(7), 7), (640, 360))
+
+    def test_watch_without_hyprland_or_a_size_gives_none(self):
+        with mock.patch("fresh_tube.play.hyprctl", return_value=None):
+            self.assertIsNone(play.watch_window(client(7), 7))
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=[[dict(client(8), address="0x99")]]):
+            self.assertIsNone(play.watch_window(client(7), 7))
+
 
 class PlayCommand(unittest.TestCase):
     def setUp(self):
@@ -244,20 +267,106 @@ class PlayCommand(unittest.TestCase):
         self.assertIn("That doesn't look like a YouTube video", err)
         self.assertEqual(self.spawned, [])
 
+    def test_a_browser_gets_the_embed_and_a_watching_placer(self):
+        code, out, err = self.run_play("--player", "chromium", "--", VID)
+        self.assertEqual(code, 0, err)
+        player, placer = self.spawned
+        self.assertEqual(player[0][0], "chromium")
+        self.assertEqual(player[0][-1], "--app=https://www.youtube.com/embed/4_fM3Nv8BB0?autoplay=1")
+        self.assertIn("--window-size=480,270", player[0])
+        self.assertEqual(placer[0], [play.BIN_PATH, "place-window", "4242", "--resize", "480x270", "--watch"])
+        self.assertIn(VID, self.box.read_json(self.box.state_file)["seen"])
+
+    def test_browser_uses_its_own_remembered_size(self):
+        state = store.load_state()
+        store.set_prefs(state, [("browserWidth", "700"), ("browserHeight", "400"),
+                                ("playerWidth", "1000"), ("playerHeight", "560")])
+        store.save_state(state)
+        self.run_play("--player", "chromium", "--", VID)
+        self.assertIn("--window-size=700,400", self.spawned[0][0])
+        self.assertEqual(self.spawned[1][0][-3:], ["--resize", "700x400", "--watch"])
+        self.spawned.clear()
+        self.run_play("--", VID)
+        self.assertIn("--geometry=1000x560", self.spawned[0][0])
+
+    def test_fallback_reaches_mpv_and_the_placer_stays_plain(self):
+        self.run_play("--fallback", "chromium", "--", VID)
+        player, placer = self.spawned
+        self.assertIn("--script-opt=fresh_tube-fallback=chromium", player[0])
+        self.assertEqual(placer[0], [play.BIN_PATH, "place-window", "4242"])
+
 
 class PlaceWindowCommand(unittest.TestCase):
+    def setUp(self):
+        self.box = support.Sandbox()
+        self.box.apply()
+        self.addCleanup(self.box.cleanup)
+        self.addCleanup(mock.patch.stopall)
+        self.find = mock.patch("fresh_tube.play.find_window", return_value=client(7)).start()
+        self.place = mock.patch("fresh_tube.play.place_window").start()
+        self.resize = mock.patch("fresh_tube.play.resize_window").start()
+        self.watch = mock.patch("fresh_tube.play.watch_window", return_value=None).start()
+
     def test_places_the_window_of_the_given_pid(self):
-        with mock.patch("fresh_tube.play.find_window", return_value=client(7)) as find, \
-             mock.patch("fresh_tube.play.place_window") as place, support.captured() as (out, err):
+        with support.captured():
             self.assertEqual(cli.main(["place-window", "7"]), 0)
-        find.assert_called_once_with(7)
-        place.assert_called_once_with(client(7))
-        with mock.patch("fresh_tube.play.find_window", return_value=None), \
-             mock.patch("fresh_tube.play.place_window") as place, support.captured():
-            self.assertEqual(cli.main(["place-window", "7"]), 0)
-        place.assert_not_called()
-        with support.captured() as (out, err):
+        self.find.assert_called_once_with(7)
+        self.place.assert_called_once_with(client(7))
+        self.resize.assert_not_called()
+        self.watch.assert_not_called()
+
+    def test_no_window_means_nothing_happens(self):
+        self.find.return_value = None
+        with support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--resize", "640x360", "--watch"]), 0)
+        self.place.assert_not_called()
+        self.watch.assert_not_called()
+
+    def test_resize_and_watch_save_the_browser_size(self):
+        self.watch.return_value = (700, 400)
+        with support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--resize", "640x360", "--watch"]), 0)
+        self.resize.assert_called_once_with(client(7), (640, 360))
+        self.watch.assert_called_once_with(client(7), 7)
+        prefs = store.load_state()["prefs"]
+        self.assertEqual((prefs["browserWidth"], prefs["browserHeight"]), (700, 400))
+
+    def test_watch_without_a_size_saves_nothing(self):
+        with support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--watch"]), 0)
+        self.assertNotIn("browserWidth", store.load_state()["prefs"])
+
+    def test_bad_pid_or_size_is_a_usage_error(self):
+        with support.captured():
             self.assertEqual(cli.main(["place-window", "x"]), 2)
+            self.assertEqual(cli.main(["place-window", "7", "--resize", "big"]), 2)
+
+
+class LoginCommand(unittest.TestCase):
+    def setUp(self):
+        self.spawned = []
+        self.addCleanup(mock.patch.stopall)
+        mock.patch("fresh_tube.play.popen",
+                   side_effect=lambda argv, **kw: self.spawned.append(argv) or mock.Mock(pid=1)).start()
+
+    def test_opens_youtube_in_the_profile(self):
+        with support.captured() as (out, err):
+            self.assertEqual(cli.main(["login"]), 0)
+        self.assertEqual(json.loads(out.getvalue()), {"login": "chromium"})
+        self.assertEqual(self.spawned[0][0], "chromium")
+        self.assertEqual(self.spawned[0][-1], "https://www.youtube.com/")
+
+    def test_refuses_a_non_browser(self):
+        with support.captured() as (out, err):
+            self.assertEqual(cli.main(["login", "--player", "mpv"]), 2)
+        self.assertIn("mpv is not a browser I know how to open", err.getvalue())
+        self.assertEqual(self.spawned, [])
+
+    def test_launch_failure(self):
+        mock.patch("fresh_tube.play.popen", side_effect=FileNotFoundError(2, "No such file or directory")).start()
+        with support.captured() as (out, err):
+            self.assertEqual(cli.main(["login"]), 1)
+        self.assertIn("Could not start chromium", err.getvalue())
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ from .videos import WATCH_URL
 DEFAULT_SIZE = (860, 484)
 WINDOW_WAIT_SECONDS = 10
 WINDOW_POLL_SECONDS = 0.1
+WATCH_POLL_SECONDS = 1
 HYPRCTL_TIMEOUT = 5
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT_PATH = os.path.join(PLUGIN_DIR, "mpv", "fresh-tube.lua")
@@ -109,6 +110,17 @@ def default_logical_size(monitors):
     return _quarter(_monitor_width(monitors, logical=True))
 
 
+def size_for(player_command, prefs):
+    """The remembered size for this kind of player, else a quarter of the focused monitor."""
+    if is_browser(player_argv(player_command)):
+        keys, measure = ("browserWidth", "browserHeight"), default_logical_size
+    else:
+        keys, measure = ("playerWidth", "playerHeight"), default_size
+    if all(key in prefs for key in keys):
+        return prefs[keys[0]], prefs[keys[1]]
+    return measure(hyprctl("monitors"))
+
+
 def launch(argv):
     """Start the player in its own session, or say why it could not start."""
     try:
@@ -119,12 +131,17 @@ def launch(argv):
         raise FreshTubeError(f"Could not start {os.path.basename(argv[0])}: {reason}", GENERAL)
 
 
-def start(player_command, video_id, size):
+def start(player_command, video_id, size, fallback=None):
     """Launch the player, then a detached helper that places its window; returns the player's pid."""
-    process = launch(build_argv(player_command, video_id, size))
+    argv = build_argv(player_command, video_id, size, fallback)
+    process = launch(argv)
+    helper = [BIN_PATH, "place-window", str(process.pid)]
+    if is_browser(argv):
+        # Browsers do not keep --window-size once floated, and have no script to remember their size.
+        helper += ["--resize", f"{size[0]}x{size[1]}", "--watch"]
     try:
-        popen([BIN_PATH, "place-window", str(process.pid)], stdin=subprocess.DEVNULL,
-              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        popen(helper, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              start_new_session=True)
     except OSError:
         pass  # the video plays anyway, just not placed
     return process.pid
@@ -194,3 +211,34 @@ def place_window(client):
     if not client.get("floating"):
         dispatch("setfloating", target)
     dispatch("movewindowpixel", f"exact {x} {y},{target}")
+
+
+def resize_window(client, size):
+    dispatch("resizewindowpixel", f"exact {size[0]} {size[1]},address:{client.get('address')}")
+
+
+def window_size(client):
+    """The client's (width, height) when hyprctl reports a usable one."""
+    size = client.get("size")
+    try:
+        width, height = int(size[0]), int(size[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def watch_window(client, pid):
+    """Follow the window until it closes or its process dies; the last size seen after placement, or None."""
+    address = client.get("address")
+    last = None
+    while True:
+        sleep(WATCH_POLL_SECONDS)
+        clients = hyprctl("clients")
+        if clients is None:
+            return last
+        current = next((c for c in clients if isinstance(c, dict) and c.get("address") == address), None)
+        if current is None:
+            return last
+        last = window_size(current) or last
+        if not pid_alive(pid):
+            return last

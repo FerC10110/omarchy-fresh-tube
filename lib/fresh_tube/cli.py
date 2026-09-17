@@ -221,22 +221,41 @@ def cmd_play(args):
     if not videos.VIDEO_ID_RE.match(args.video_id or ""):
         raise FreshTubeError("That doesn't look like a YouTube video id", USAGE)
     with store.state_transaction() as state:
-        prefs = state["prefs"]
-        if "playerWidth" in prefs and "playerHeight" in prefs:
-            size = (prefs["playerWidth"], prefs["playerHeight"])
-        else:
-            size = play.default_size(play.hyprctl("monitors"))
-        play.start(args.player, args.video_id, size)
+        size = play.size_for(args.player, state["prefs"])
+        play.start(args.player, args.video_id, size, args.fallback)
         store.mark_seen(state, args.video_id)
     emit({"played": args.video_id})
     return 0
 
 
+def size_arg(text):
+    parts = text.lower().split("x")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise argparse.ArgumentTypeError("expected WIDTHxHEIGHT")
+    return int(parts[0]), int(parts[1])
+
+
 def cmd_place_window(args):
-    """Hidden helper spawned by `play`: wait for the player's window and put it below the bar."""
+    """Hidden helper spawned by `play`: wait for the player's window, put it below the bar, and for browsers
+    size it and remember the size it closes with."""
     window = play.find_window(args.pid)
-    if window is not None:
-        play.place_window(window)
+    if window is None:
+        return 0
+    play.place_window(window)
+    if args.resize:
+        play.resize_window(window, args.resize)
+    if args.watch:
+        size = play.watch_window(window, args.pid)
+        if size:
+            with store.state_transaction() as state:
+                store.set_prefs(state, [("browserWidth", str(size[0])), ("browserHeight", str(size[1]))])
+    return 0
+
+
+def cmd_login(args):
+    """Open the fallback browser's profile on YouTube so the user can sign in (and add an ad blocker)."""
+    play.launch(play.login_argv(args.player))
+    emit({"login": args.player})
     return 0
 
 
@@ -305,12 +324,19 @@ def build_parser():
 
     p = sub.add_parser("play", help="play a video in the configured player and mark it seen")
     p.add_argument("--player", default="mpv", help="player command line (default: mpv)")
+    p.add_argument("--fallback", default=None, help="player to open when mpv cannot open the video")
     p.add_argument("video_id")
     p.set_defaults(func=cmd_play)
 
     p = sub.add_parser("place-window", help=argparse.SUPPRESS)
     p.add_argument("pid", type=int)
+    p.add_argument("--resize", type=size_arg, default=None)
+    p.add_argument("--watch", action="store_true")
     p.set_defaults(func=cmd_place_window)
+
+    p = sub.add_parser("login", help="open the fallback browser on YouTube so you can sign in")
+    p.add_argument("--player", default="chromium", help="browser command line (default: chromium)")
+    p.set_defaults(func=cmd_login)
 
     return parser, sub
 
