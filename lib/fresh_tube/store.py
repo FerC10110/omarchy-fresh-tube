@@ -124,14 +124,15 @@ def remove_channel(channels, channel_id):
 # --- state -------------------------------------------------------------------
 
 DEFAULT_PREFS = {"width": 420, "height": 520, "pinned": False}
-PREF_LIMITS = {"width": (300, 4000), "height": (220, 4000)}
+PREF_LIMITS = {"width": (300, 4000), "height": (220, 4000),
+               "playerWidth": (200, 8000), "playerHeight": (200, 8000)}
 MAX_PINS = 3
 WATCH_URL = "https://www.youtube.com/watch?v={}"
 
 
 def empty_state():
     return {"version": STATE_VERSION, "seen": [], "feeds": {}, "fetchedAt": "",
-            "prefs": dict(DEFAULT_PREFS), "pins": []}
+            "prefs": dict(DEFAULT_PREFS), "pins": [], "queue": []}
 
 
 def _valid_pref(key, value):
@@ -153,6 +154,10 @@ def _valid_pin(entry):
     return isinstance(entry, dict) and isinstance(entry.get("videoId"), str) and entry["videoId"] != ""
 
 
+def _valid_queue_entry(entry):
+    return isinstance(entry, dict) and isinstance(entry.get("videoId"), str) and entry["videoId"] != ""
+
+
 def load_state():
     data = read_json(state_path(), None)
     state = empty_state()
@@ -166,11 +171,17 @@ def load_state():
         state["fetchedAt"] = data["fetchedAt"]
     prefs = data.get("prefs")
     if isinstance(prefs, dict):
-        for key in DEFAULT_PREFS:
+        for key in set(DEFAULT_PREFS) | set(PREF_LIMITS):
             if key in prefs and _valid_pref(key, prefs[key]):
                 state["prefs"][key] = prefs[key]
     if isinstance(data.get("pins"), list):
         state["pins"] = [dict(p) for p in data["pins"] if _valid_pin(p)][:MAX_PINS]
+    if isinstance(data.get("queue"), list):
+        seen_ids = set()
+        for entry in data["queue"]:
+            if _valid_queue_entry(entry) and entry["videoId"] not in seen_ids:
+                seen_ids.add(entry["videoId"])
+                state["queue"].append(dict(entry))
     return state
 
 
@@ -195,6 +206,15 @@ def set_pref(state, key, value):
         state["prefs"]["pinned"] = text == "true"
     else:
         raise FreshTubeError(f"Unknown preference: {key}", USAGE)
+    return state["prefs"]
+
+
+def set_prefs(state, pairs):
+    """Apply several (key, value) pairs; nothing changes unless every pair is valid."""
+    trial = {"prefs": dict(state["prefs"])}
+    for key, value in pairs:
+        set_pref(trial, key, value)
+    state["prefs"] = trial["prefs"]
     return state["prefs"]
 
 
@@ -284,3 +304,42 @@ def unpin_video(state, video_id):
         raise FreshTubeError("That video is not pinned", UNKNOWN)
     state["pins"] = kept
     return kept
+
+
+# --- watch later --------------------------------------------------------------
+
+def queue_ids(state):
+    return [q["videoId"] for q in state.get("queue", [])]
+
+
+def queue_record(video_id, meta):
+    """The public shape of a saved video: what the panel shows and what `play` needs."""
+    return {"videoId": video_id, "title": meta.get("title", ""), "channel": meta.get("channel", ""),
+            "thumbnail": meta.get("thumbnail", ""), "url": WATCH_URL.format(video_id), "addedAt": now_iso()}
+
+
+def queue_add(state, video):
+    queue = state.setdefault("queue", [])
+    if any(q["videoId"] == video["videoId"] for q in queue):
+        raise FreshTubeError("Already in the list", DUPLICATE)
+    queue.append(dict(video))
+    return queue
+
+
+def queue_move(state, video_id, index):
+    """Put the video at `index` (clamped to the list); the others keep their relative order."""
+    queue = state.setdefault("queue", [])
+    for position, entry in enumerate(queue):
+        if entry["videoId"] == video_id:
+            queue.pop(position)
+            queue.insert(max(0, min(int(index), len(queue))), entry)
+            return queue
+    raise FreshTubeError("Not in the list", UNKNOWN)
+
+
+def queue_remove(state, video_id):
+    """Drop the video from the list; True when it was there."""
+    queue = state.setdefault("queue", [])
+    kept = [q for q in queue if q["videoId"] != video_id]
+    state["queue"] = kept
+    return len(kept) != len(queue)

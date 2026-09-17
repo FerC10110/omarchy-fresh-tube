@@ -89,7 +89,7 @@ class State(StoreTest):
     def test_missing_state_has_defaults(self):
         self.assertEqual(store.load_state(), {"version": 1, "seen": [], "feeds": {}, "fetchedAt": "",
                                               "prefs": {"width": 420, "height": 520, "pinned": False},
-                                              "pins": []})
+                                              "pins": [], "queue": []})
 
     def test_save_and_reload(self):
         state = store.load_state()
@@ -225,3 +225,109 @@ class Feeds(StoreTest):
         store.prune_seen(state)
         self.assertEqual(state["seen"], [])
         self.assertEqual([v["videoId"] for v in store.unseen_videos(state, channels)], ["v2"])
+
+
+META = {"title": "A title", "channel": "Some Channel", "thumbnail": "https://i.ytimg.com/vi/v1/hqdefault.jpg"}
+
+
+class Queue(StoreTest):
+    def record(self, video_id):
+        return store.queue_record(video_id, META)
+
+    def test_record_shape(self):
+        record = self.record("v1")
+        self.assertEqual(record["videoId"], "v1")
+        self.assertEqual(record["url"], "https://www.youtube.com/watch?v=v1")
+        self.assertEqual((record["title"], record["channel"], record["thumbnail"]),
+                         ("A title", "Some Channel", META["thumbnail"]))
+        self.assertRegex(record["addedAt"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00$")
+
+    def test_add_keeps_order_and_rejects_duplicates(self):
+        state = store.load_state()
+        self.assertEqual(state["queue"], [])
+        store.queue_add(state, self.record("v1"))
+        store.queue_add(state, self.record("v2"))
+        self.assertEqual(store.queue_ids(state), ["v1", "v2"])
+        with self.assertRaises(FreshTubeError) as caught:
+            store.queue_add(state, self.record("v1"))
+        self.assertEqual(str(caught.exception), "Already in the list")
+        self.assertEqual(caught.exception.code, DUPLICATE)
+
+    def test_move_clamps_to_the_ends(self):
+        state = store.load_state()
+        for video_id in ("v1", "v2", "v3"):
+            store.queue_add(state, self.record(video_id))
+        store.queue_move(state, "v3", 0)
+        self.assertEqual(store.queue_ids(state), ["v3", "v1", "v2"])
+        store.queue_move(state, "v3", 99)
+        self.assertEqual(store.queue_ids(state), ["v1", "v2", "v3"])
+        store.queue_move(state, "v2", -5)
+        self.assertEqual(store.queue_ids(state), ["v2", "v1", "v3"])
+        store.queue_move(state, "v1", 1)
+        self.assertEqual(store.queue_ids(state), ["v2", "v1", "v3"])
+        with self.assertRaises(FreshTubeError) as caught:
+            store.queue_move(state, "nope", 0)
+        self.assertEqual(str(caught.exception), "Not in the list")
+        self.assertEqual(caught.exception.code, UNKNOWN)
+
+    def test_remove_reports_whether_it_was_there(self):
+        state = store.load_state()
+        store.queue_add(state, self.record("v1"))
+        self.assertTrue(store.queue_remove(state, "v1"))
+        self.assertFalse(store.queue_remove(state, "v1"))
+        self.assertEqual(state["queue"], [])
+
+    def test_queue_survives_save_and_load_in_order(self):
+        state = store.load_state()
+        for video_id in ("v2", "v1"):
+            store.queue_add(state, self.record(video_id))
+        store.save_state(state)
+        self.assertEqual(store.queue_ids(store.load_state()), ["v2", "v1"])
+
+    def test_load_drops_bad_entries_and_duplicates(self):
+        self.box.write_json(self.box.state_file, {
+            "version": 1, "queue": [{"videoId": "v1", "title": "one"}, "junk", {"title": "no id"},
+                                    {"videoId": ""}, {"videoId": "v1", "title": "dup"}, {"videoId": "v2"}]})
+        self.assertEqual([q["videoId"] for q in store.load_state()["queue"]], ["v1", "v2"])
+        self.assertEqual(store.load_state()["queue"][0]["title"], "one")
+        self.box.write_json(self.box.state_file, {"version": 1, "queue": "nope"})
+        self.assertEqual(store.load_state()["queue"], [])
+
+    def test_queue_does_not_affect_unseen_or_pins(self):
+        state = store.load_state()
+        store.update_feed(state, "UC1", PARSED, "2026-09-16T10:00:00+00:00")
+        store.queue_add(state, self.record(PARSED["latest"]["videoId"]))
+        channels = [{"id": "UC1", "name": "One"}]
+        self.assertEqual([v["videoId"] for v in store.unseen_videos(state, channels)], [PARSED["latest"]["videoId"]])
+        store.mark_seen(state, PARSED["latest"]["videoId"])
+        self.assertEqual(store.unseen_videos(state, channels), [])
+        self.assertEqual(store.queue_ids(state), [PARSED["latest"]["videoId"]])
+
+
+class PlayerPrefs(StoreTest):
+    def test_player_size_is_absent_until_set(self):
+        state = store.load_state()
+        self.assertNotIn("playerWidth", state["prefs"])
+        store.set_pref(state, "playerWidth", "860")
+        store.set_pref(state, "playerHeight", "484")
+        store.save_state(state)
+        prefs = store.load_state()["prefs"]
+        self.assertEqual((prefs["playerWidth"], prefs["playerHeight"]), (860, 484))
+
+    def test_player_size_limits(self):
+        state = store.load_state()
+        with self.assertRaises(FreshTubeError) as caught:
+            store.set_pref(state, "playerWidth", "100")
+        self.assertIn("between 200 and 8000", str(caught.exception))
+        self.assertEqual(caught.exception.code, USAGE)
+        self.box.write_json(self.box.state_file, {"version": 1, "prefs": {"playerWidth": 9999, "playerHeight": "x"}})
+        self.assertNotIn("playerWidth", store.load_state()["prefs"])
+        self.assertNotIn("playerHeight", store.load_state()["prefs"])
+
+    def test_set_prefs_is_all_or_nothing(self):
+        state = store.load_state()
+        prefs = store.set_prefs(state, [("playerWidth", "860"), ("playerHeight", "484")])
+        self.assertEqual((prefs["playerWidth"], prefs["playerHeight"]), (860, 484))
+        with self.assertRaises(FreshTubeError):
+            store.set_prefs(state, [("playerWidth", "900"), ("playerHeight", "10")])
+        self.assertEqual((state["prefs"]["playerWidth"], state["prefs"]["playerHeight"]), (860, 484))
