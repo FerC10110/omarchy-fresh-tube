@@ -5,7 +5,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 from . import feed, resolve, store
-from .errors import DUPLICATE, UNKNOWN, USAGE, FreshTubeError
+from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
 
 
 def emit(data):
@@ -68,6 +68,8 @@ def fetch_one(channel):
         return feed.fetch_feed(channel["id"]), ""
     except FreshTubeError as e:
         return None, str(e)
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
 
 
 def refresh_all(channels, cached):
@@ -208,3 +210,6 @@ def main(argv=None):
     except FreshTubeError as e:
         print(f"fresh-tube: {e}", file=sys.stderr)
         return e.code
+    except Exception as e:
+        print(f"fresh-tube: {type(e).__name__}: {e}", file=sys.stderr)
+        return GENERAL

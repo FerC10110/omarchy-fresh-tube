@@ -1,3 +1,4 @@
+import http.client
 import unittest
 import urllib.error
 from unittest import mock
@@ -55,6 +56,24 @@ class Fetch(unittest.TestCase):
         def boom(request, timeout):
             raise urllib.error.URLError("no route")
         with mock.patch("fresh_tube.feed.urlopen", boom):
+            with self.assertRaises(FreshTubeError) as caught:
+                feed.fetch_url("https://example.invalid/x", 1)
+        self.assertEqual(caught.exception.code, NETWORK)
+
+    def test_incomplete_read_is_a_network_error(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                raise http.client.IncompleteRead(b"")
+
+        def capture(request, timeout):
+            return Response()
+        with mock.patch("fresh_tube.feed.urlopen", capture):
             with self.assertRaises(FreshTubeError) as caught:
                 feed.fetch_url("https://example.invalid/x", 1)
         self.assertEqual(caught.exception.code, NETWORK)

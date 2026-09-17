@@ -1,3 +1,4 @@
+import http.client
 import json
 import unittest
 from unittest import mock
@@ -147,6 +148,23 @@ class Refresh(CliTest):
         # A later good fetch clears the error.
         self.assertEqual(self.refresh()["errors"], [])
 
+    def test_one_channel_raising_an_unexpected_exception_does_not_abort_the_others(self):
+        first = self.refresh()
+
+        def flaky(channel_id, timeout=10):
+            if channel_id == "UC2":
+                raise http.client.IncompleteRead(b"")
+            return self.two_feeds(channel_id)
+
+        with mock.patch("fresh_tube.store.now_iso", return_value="2099-01-01T00:00:00+00:00"):
+            payload = self.refresh(fetch=flaky)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
+        self.assertEqual(len(payload["errors"]), 1)
+        self.assertEqual(payload["errors"][0]["channelId"], "UC2")
+        self.assertIn("IncompleteRead", payload["errors"][0]["message"])
+        self.assertEqual(self.box.read_json(self.box.state_file)["feeds"]["UC1"]["latest"]["videoId"], "v1")
+        self.assertGreater(payload["fetchedAt"], first["fetchedAt"])
+
     def test_all_failing_is_offline_and_keeps_fetched_at(self):
         first = self.refresh()
 
@@ -219,6 +237,19 @@ class Prefs(CliTest):
         self.assertIn("between 220 and 4000", self.fails(2, "prefs", "set", "height", "10"))
         self.assertIn("Unknown preference", self.fails(2, "prefs", "set", "color", "red"))
         self.assertIn("needs a key and a value", self.fails(2, "prefs", "set", "width"))
+
+
+class UnexpectedErrors(CliTest):
+    def setUp(self):
+        super().setUp()
+        self.box.apply()
+
+    def test_unexpected_error_prints_one_clean_line_and_exits_1(self):
+        with mock.patch("fresh_tube.cli.store.load_channels", side_effect=RuntimeError("boom")), \
+             support.captured() as (out, err):
+            code = cli.main(["channels"])
+        self.assertEqual(code, 1)
+        self.assertIn("RuntimeError: boom", err.getvalue())
 
 
 class Pins(CliTest):

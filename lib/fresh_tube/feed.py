@@ -1,4 +1,5 @@
 """One channel's RSS feed: download it and pick the newest video."""
+import http.client
 import socket
 import urllib.error
 import urllib.request
@@ -27,7 +28,7 @@ def fetch_url(url, timeout):
             return response.read()
     except urllib.error.HTTPError as e:
         raise FreshTubeError(f"HTTP {e.code} from {url}", NETWORK)
-    except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as e:
+    except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, http.client.HTTPException) as e:
         reason = getattr(e, "reason", e)
         raise FreshTubeError(f"Could not reach {url}: {reason}", NETWORK)
 
