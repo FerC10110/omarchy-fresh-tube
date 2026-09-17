@@ -65,6 +65,59 @@ class DefaultSize(unittest.TestCase):
         self.assertEqual(play.default_size([]), play.DEFAULT_SIZE)
         self.assertEqual(play.default_size([{"width": "x"}]), play.DEFAULT_SIZE)
 
+    def test_logical_size_divides_by_scale(self):
+        self.assertEqual(play.default_logical_size(MONITORS), (480, 270))
+        self.assertEqual(play.default_logical_size([dict(MONITORS[1], focused=True)]), (320, 180))
+        self.assertEqual(play.default_logical_size(None), play.DEFAULT_SIZE)
+        self.assertEqual(play.default_logical_size([{"width": 1000, "scale": "x"}]), play.DEFAULT_SIZE)
+
+
+class Browser(unittest.TestCase):
+    def test_known_browsers(self):
+        for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave", "brave-browser",
+                     "vivaldi", "vivaldi-stable", "microsoft-edge", "microsoft-edge-stable", "helium", "opera"):
+            self.assertTrue(play.is_browser([name]), name)
+            self.assertTrue(play.is_browser(["/usr/bin/" + name, "--flag"]), name)
+        for name in ("mpv", "vlc", "firefox", "chromium2"):
+            self.assertFalse(play.is_browser([name]), name)
+
+    def test_browser_gets_app_mode_and_its_own_profile(self):
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/tmp/xdg-state"}):
+            argv = play.build_argv("chromium", VID, (480, 270))
+        self.assertEqual(argv[0], "chromium")
+        self.assertIn("--user-data-dir=/tmp/xdg-state/fresh-tube/browser", argv)
+        self.assertIn("--no-first-run", argv)
+        self.assertIn("--no-default-browser-check", argv)
+        self.assertIn("--autoplay-policy=no-user-gesture-required", argv)
+        self.assertIn("--window-size=480,270", argv)
+        self.assertEqual(argv[-1], "--app=https://www.youtube.com/embed/4_fM3Nv8BB0?autoplay=1")
+        self.assertNotIn(URL, argv)
+
+    def test_browser_options_come_first(self):
+        argv = play.build_argv("brave --incognito", VID, (480, 270))
+        self.assertEqual(argv[:2], ["brave", "--incognito"])
+
+    def test_fallback_is_handed_to_mpv_only(self):
+        flag = "--script-opt=fresh_tube-fallback=chromium"
+        self.assertIn(flag, play.build_argv("mpv", VID, (860, 484), fallback="chromium"))
+        self.assertNotIn(flag, play.build_argv("mpv", VID, (860, 484)))
+        self.assertEqual(play.build_argv("vlc", VID, (860, 484), fallback="chromium"), ["vlc", URL])
+        self.assertNotIn(flag, play.build_argv("chromium", VID, (480, 270), fallback="chromium"))
+
+    def test_login_opens_youtube_in_a_normal_window_of_the_profile(self):
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/tmp/xdg-state"}):
+            argv = play.login_argv("chromium")
+        self.assertEqual(argv[0], "chromium")
+        self.assertIn("--user-data-dir=/tmp/xdg-state/fresh-tube/browser", argv)
+        self.assertEqual(argv[-1], "https://www.youtube.com/")
+        self.assertFalse(any(a.startswith("--app") for a in argv))
+
+    def test_login_refuses_non_browsers(self):
+        with self.assertRaises(FreshTubeError) as caught:
+            play.login_argv("mpv")
+        self.assertEqual(str(caught.exception), "mpv is not a browser I know how to open")
+        self.assertEqual(caught.exception.code, USAGE)
+
 
 class Placement(unittest.TestCase):
     def setUp(self):

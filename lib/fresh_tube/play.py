@@ -6,6 +6,7 @@ import subprocess
 import time
 
 from .errors import GENERAL, USAGE, FreshTubeError
+from .store import state_dir
 from .videos import WATCH_URL
 
 DEFAULT_SIZE = (860, 484)
@@ -15,6 +16,11 @@ HYPRCTL_TIMEOUT = 5
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT_PATH = os.path.join(PLUGIN_DIR, "mpv", "fresh-tube.lua")
 BIN_PATH = os.path.join(PLUGIN_DIR, "bin", "fresh-tube")
+# Chromium-family browsers that accept --app and --user-data-dir.
+BROWSERS = frozenset(["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "brave", "brave-browser",
+                      "vivaldi", "vivaldi-stable", "microsoft-edge", "microsoft-edge-stable", "helium", "opera"])
+EMBED_URL = "https://www.youtube.com/embed/{}?autoplay=1"
+YOUTUBE_URL = "https://www.youtube.com/"
 
 # Module-level so tests can replace them.
 popen = subprocess.Popen
@@ -33,31 +39,74 @@ def is_mpv(argv):
     return os.path.basename(argv[0]) == "mpv"
 
 
-def build_argv(player_command, video_id, size):
-    """The full command line: mpv gets the companion script, the size and resume; others only the URL."""
+def is_browser(argv):
+    return os.path.basename(argv[0]) in BROWSERS
+
+
+def browser_flags():
+    """A profile of our own: a separate browser process (so its window can be found by pid) that keeps its own login."""
+    return [f"--user-data-dir={os.path.join(state_dir(), 'browser')}", "--no-first-run", "--no-default-browser-check"]
+
+
+def build_argv(player_command, video_id, size, fallback=None):
+    """The full command line: mpv gets the companion script, the size and resume; a browser gets app mode; others only the URL."""
     argv = player_argv(player_command)
     if is_mpv(argv):
         argv += ["--save-position-on-quit", "--force-window=immediate",
                  f"--geometry={size[0]}x{size[1]}", f"--script={SCRIPT_PATH}",
                  f"--script-opt=fresh_tube-id={video_id}", f"--script-opt=fresh_tube-bin={BIN_PATH}"]
+        if fallback:
+            argv.append(f"--script-opt=fresh_tube-fallback={fallback}")
+        return argv + [WATCH_URL.format(video_id)]
+    if is_browser(argv):
+        return argv + browser_flags() + ["--autoplay-policy=no-user-gesture-required",
+                                         f"--window-size={size[0]},{size[1]}", f"--app={EMBED_URL.format(video_id)}"]
     return argv + [WATCH_URL.format(video_id)]
 
 
-def default_size(monitors):
-    """A quarter of the focused monitor's physical width, 16:9; DEFAULT_SIZE when that cannot be known."""
+def login_argv(player_command):
+    """A normal browser window on YouTube, in our profile, so the user can sign in there."""
+    argv = player_argv(player_command)
+    if not is_browser(argv):
+        raise FreshTubeError(f"{os.path.basename(argv[0])} is not a browser I know how to open", USAGE)
+    return argv + browser_flags() + [YOUTUBE_URL]
+
+
+def _monitor_width(monitors, logical):
+    """The focused (else first) monitor's width, in logical pixels when asked; None when it cannot be known."""
     if not monitors:
-        return DEFAULT_SIZE
+        return None
     focused = next((m for m in monitors if isinstance(m, dict) and m.get("focused")), None)
     monitor = focused or (monitors[0] if isinstance(monitors[0], dict) else None)
     if not monitor:
-        return DEFAULT_SIZE
+        return None
     try:
-        width = int(round(int(monitor.get("width")) / 4))
+        width = float(int(monitor.get("width")))
+        if logical:
+            width = width / (float(monitor.get("scale") or 1) or 1.0)
     except (TypeError, ValueError):
+        return None
+    return width if width > 0 else None
+
+
+def _quarter(width):
+    """A quarter of `width`, 16:9; DEFAULT_SIZE without a usable width."""
+    if width is None:
         return DEFAULT_SIZE
-    if width <= 0:
+    quarter = int(round(width / 4))
+    if quarter <= 0:
         return DEFAULT_SIZE
-    return width, int(round(width * 9 / 16))
+    return quarter, int(round(quarter * 9 / 16))
+
+
+def default_size(monitors):
+    """mpv's first-run size: mpv measures --geometry in physical pixels."""
+    return _quarter(_monitor_width(monitors, logical=False))
+
+
+def default_logical_size(monitors):
+    """A browser's first-run size: browsers measure --window-size in logical pixels."""
+    return _quarter(_monitor_width(monitors, logical=True))
 
 
 def launch(argv):

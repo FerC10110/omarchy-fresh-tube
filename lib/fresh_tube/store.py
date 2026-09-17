@@ -127,7 +127,8 @@ def remove_channel(channels, channel_id):
 
 DEFAULT_PREFS = {"width": 420, "height": 520, "pinned": False}
 PREF_LIMITS = {"width": (300, 4000), "height": (220, 4000),
-               "playerWidth": (200, 8000), "playerHeight": (200, 8000)}
+               "playerWidth": (200, 8000), "playerHeight": (200, 8000),
+               "browserWidth": (200, 8000), "browserHeight": (200, 8000)}
 MAX_PINS = 3
 WATCH_URL = "https://www.youtube.com/watch?v={}"
 

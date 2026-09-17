@@ -359,3 +359,16 @@ class PlayerPrefs(StoreTest):
         with self.assertRaises(FreshTubeError):
             store.set_prefs(state, [("playerWidth", "900"), ("playerHeight", "10")])
         self.assertEqual((state["prefs"]["playerWidth"], state["prefs"]["playerHeight"]), (860, 484))
+
+
+class BrowserPrefs(StoreTest):
+    def test_browser_size_limits(self):
+        state = store.load_state()
+        store.set_prefs(state, [("browserWidth", "640"), ("browserHeight", "360")])
+        store.save_state(state)
+        prefs = store.load_state()["prefs"]
+        self.assertEqual((prefs["browserWidth"], prefs["browserHeight"]), (640, 360))
+        with self.assertRaises(FreshTubeError) as caught:
+            store.set_pref(state, "browserHeight", "9999")
+        self.assertIn("between 200 and 8000", str(caught.exception))
+        self.assertEqual(caught.exception.code, USAGE)
