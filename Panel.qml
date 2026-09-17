@@ -35,11 +35,15 @@ Panel {
 
   property var pinnedVideos: []
 
+  property string tab: "new"
+  property var queueVideos: []
+
   readonly property int maxPins: 3
   readonly property bool pinsFull: pinnedVideos.length >= maxPins
 
   readonly property bool refreshing: refreshCmd.running
   readonly property bool adding: addCmd.running
+  readonly property bool addingVideo: queueAddCmd.running
   readonly property string program: pluginPath("bin/fresh-tube")
   readonly property string playerCommand: String(setting("playerCommand", "mpv") || "mpv")
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -82,6 +86,7 @@ Panel {
   function applyPayload(data) {
     videos = Array.isArray(data.videos) ? data.videos : []
     pinnedVideos = Array.isArray(data.pinned) ? data.pinned : []
+    queueVideos = Array.isArray(data.queue) ? data.queue : []
     errors = Array.isArray(data.errors) ? data.errors : []
     fetchedAt = String(data.fetchedAt || "")
     offline = data.offline === true
@@ -106,26 +111,44 @@ Panel {
     videos = videos.filter(function(v) { return v.videoId !== videoId })
   }
 
+  // Every play goes through the script: it launches the player, places its
+  // window and marks the video seen only once the player is running.
   function play(video) {
-    if (!video || seenCmd.running) return
+    if (!video || playCmd.running) return
     if (!playerFound) {
       setNotice(Model.playerName(playerCommand) + " not found. Set playerCommand in shell.json.", true)
       return
     }
-    try {
-      Quickshell.execDetached(Model.playerArgs(playerCommand).concat([video.url]))
-    } catch (e) {
-      setNotice("Could not start " + Model.playerName(playerCommand) + ": " + e, true)
-      return
-    }
     pendingPlay = video
-    seenCmd.start(["seen", "--", video.videoId])
+    playCmd.start(["play", "--player", playerCommand, "--", video.videoId])
   }
 
   function dismiss(video) {
     if (!video || seenCmd.running) return
     pendingPlay = null
     seenCmd.start(["seen", "--", video.videoId])
+  }
+
+  // Finished with a saved video: out of the Watch later list, and seen.
+  function finish(video) {
+    if (!video || doneCmd.running) return
+    doneCmd.start(["done", "--", video.videoId])
+  }
+
+  function toggleTab() {
+    tab = tab === "new" ? "later" : "new"
+  }
+
+  function addToQueue(text) {
+    var value = String(text || "").trim()
+    if (value === "" || queueAddCmd.running) return
+    videosView.laterView.error = ""
+    queueAddCmd.start(["queue", "add", "--", value])
+  }
+
+  function moveQueued(video, index) {
+    if (!video || queueMoveCmd.running) return
+    queueMoveCmd.start(["queue", "move", "--", video.videoId, String(Math.max(0, index))])
   }
 
   function isPinned(video) {
@@ -226,6 +249,7 @@ Panel {
   }
 
   onViewChanged: focusCurrent()
+  onTabChanged: focusCurrent()
 
   onPlayerCommandChanged: checkPlayer()
 
@@ -307,7 +331,6 @@ Panel {
     id: seenCmd
     program: root.program
     onFinished: function(code, out, err) {
-      var video = root.pendingPlay
       root.pendingPlay = null
       if (code !== 0) {
         root.setNotice(root.lastLine(err) || "Could not mark it as seen", true)
@@ -317,7 +340,66 @@ Panel {
       var data = root.parseJson(out)
       var id = data ? String(data.seen || "") : ""
       if (id !== "") root.removeVideo(id)
-      if (video && !root.pinned) root.close()
+    }
+  }
+
+  // The player is up once this returns 0; a failed launch leaves every list as it was.
+  FreshTubeCommand {
+    id: playCmd
+    program: root.program
+    timeoutMs: 15000
+    onFinished: function(code, out, err) {
+      var video = root.pendingPlay
+      root.pendingPlay = null
+      if (code !== 0) {
+        root.setNotice(root.lastLine(err) || "Could not start the player", true)
+        return
+      }
+      if (root.noticeIsError) root.setNotice("", false)
+      if (video) root.removeVideo(video.videoId)
+      root.loadCached()
+      if (!root.pinned) root.close()
+    }
+  }
+
+  FreshTubeCommand {
+    id: doneCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      if (code !== 0) {
+        root.setNotice(root.lastLine(err) || "Could not remove that video", true)
+        return
+      }
+      if (root.noticeIsError) root.setNotice("", false)
+      root.loadCached()
+    }
+  }
+
+  // Looking a video up can chain oEmbed and yt-dlp.
+  FreshTubeCommand {
+    id: queueAddCmd
+    program: root.program
+    timeoutMs: 60000
+    onFinished: function(code, out, err) {
+      var later = videosView.laterView
+      if (code !== 0) {
+        later.error = root.lastLine(err) || "Could not add that video"
+        root.focusCurrent()
+        return
+      }
+      later.clearInput()
+      root.loadCached()
+      root.focusCurrent()
+    }
+  }
+
+  // The list already shows the dragged order; a failure rereads the saved one.
+  FreshTubeCommand {
+    id: queueMoveCmd
+    program: root.program
+    onFinished: function(code, out, err) {
+      if (code !== 0) root.setNotice(root.lastLine(err) || "Could not reorder the list", true)
+      root.loadCached()
     }
   }
 

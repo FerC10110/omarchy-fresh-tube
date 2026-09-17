@@ -14,6 +14,7 @@ Item {
   property real nowMs: Date.now()
 
   readonly property Item focusItem: keys
+  readonly property var laterView: ({ error: "", clearInput: function() {} })
   readonly property color fg: host ? host.foreground : Color.foreground
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property color urgent: host ? host.urgent : Color.urgent
