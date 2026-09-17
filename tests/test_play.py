@@ -171,6 +171,18 @@ class Placement(unittest.TestCase):
             self.assertIsNone(play.find_window(7))
         self.assertEqual(hyprctl.call_count, 1)
 
+    def test_finds_the_window_by_title_when_the_pid_is_gone(self):
+        # Chromium handed the page to an instance it already had running: our pid died, the window is another's.
+        window = dict(client(2602), title="Fresh Tube x :4321")
+        polls = [[client(8)], [client(8), window]]
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=polls), \
+             mock.patch("fresh_tube.play.pid_alive", return_value=False):
+            self.assertEqual(play.find_window(7, "Fresh Tube x :4321"), window)
+
+    def test_a_title_does_not_replace_the_pid_match(self):
+        with mock.patch("fresh_tube.play.hyprctl", return_value=[client(7)]):
+            self.assertEqual(play.find_window(7, "Fresh Tube x :4321"), client(7))
+
     def test_no_hyprland_means_no_wait(self):
         with mock.patch("fresh_tube.play.hyprctl", return_value=None) as hyprctl, \
              mock.patch("fresh_tube.play.sleep") as sleep:
@@ -344,7 +356,7 @@ class PlaceWindowCommand(unittest.TestCase):
     def test_places_the_window_of_the_given_pid(self):
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7"]), 0)
-        self.find.assert_called_once_with(7)
+        self.find.assert_called_once_with(7, None)
         self.place.assert_called_once_with(client(7))
         self.resize.assert_not_called()
         self.watch.assert_not_called()
@@ -384,16 +396,29 @@ class PlaceWindowCommand(unittest.TestCase):
 
 
     def test_serve_hands_the_socket_and_video_to_the_page_server(self):
-        fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM).detach()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port, fd = sock.getsockname()[1], sock.detach()
         server = mock.Mock()
         with mock.patch("fresh_tube.page.serve", return_value=server) as serve, support.captured():
             self.assertEqual(cli.main(["place-window", "7", "--watch", "--serve", str(fd), "--video", VID]), 0)
         served, video = serve.call_args[0]
         self.addCleanup(served.close)
         self.assertEqual((served.fileno(), video), (fd, VID))
-        self.watch.assert_called_once()
+        self.find.assert_called_once_with(7, f"Fresh Tube {VID} :{port}")
+        self.watch.assert_called_once_with(client(7), 7)
         server.shutdown.assert_called_once()
         server.server_close.assert_called_once()
+
+    def test_watches_the_window_by_its_own_pid(self):
+        # The window may belong to a browser instance that was already running, not to the pid we launched.
+        window = dict(client(2602), title="whatever")
+        self.find.return_value = window
+        fd = socket.socket(socket.AF_INET, socket.SOCK_STREAM).detach()
+        with mock.patch("fresh_tube.page.serve", return_value=mock.Mock()) as serve, support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--watch", "--serve", str(fd), "--video", VID]), 0)
+        self.addCleanup(serve.call_args[0][0].close)
+        self.watch.assert_called_once_with(window, 2602)
 
     def test_serve_needs_a_video_id(self):
         with support.captured():

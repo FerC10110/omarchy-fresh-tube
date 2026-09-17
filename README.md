@@ -52,9 +52,7 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   open (YouTube's player refuses to play without a referring page). Run
   `fresh-tube login` once to sign in to YouTube in that profile (and, if you
   like, add an ad blocker there); with another browser as `fallbackCommand`,
-  run `fresh-tube login --player <that command>`. Close the login window
-  before playing: while any window of that profile is open, Chromium reuses
-  it and the new video is neither placed nor sized. In the browser the video
+  run `fresh-tube login --player <that command>`. In the browser the video
   starts from the beginning and does not leave Watch later by itself: use ✕
   or `Delete`. To try the browser without waiting for mpv to fail, run
   `fresh-tube play --player chromium <videoId>`.

@@ -239,23 +239,27 @@ def size_arg(text):
 def cmd_place_window(args):
     """Hidden helper spawned by `play`: wait for the player's window, put it below the bar, and for browsers
     serve the page that embeds the player, size the window and remember the size it closes with."""
-    server = None
+    server = title = None
     if args.serve is not None:
         if not videos.VIDEO_ID_RE.match(args.video or ""):
             raise FreshTubeError("--serve needs --video with a YouTube video id", USAGE)
         try:
-            server = page.serve(socket.socket(fileno=args.serve), args.video)
+            sock = socket.socket(fileno=args.serve)
+            server = page.serve(sock, args.video)
+            title = page.window_title(args.video, sock.getsockname()[1])
         except OSError as e:
             raise FreshTubeError(f"Could not serve the player page: {e.strerror or e}", GENERAL)
     try:
-        window = play.find_window(args.pid)
+        window = play.find_window(args.pid, title)
         if window is None:
             return 0
         play.place_window(window)
         if args.resize:
             play.resize_window(window, args.resize)
         if args.watch:
-            size = play.watch_window(window, args.pid)
+            # The window's own pid: it may belong to a browser instance that was already running.
+            pid = window.get("pid")
+            size = play.watch_window(window, pid if isinstance(pid, int) and pid > 0 else args.pid)
             if size:
                 try:
                     with store.state_transaction() as state:

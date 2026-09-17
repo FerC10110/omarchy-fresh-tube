@@ -12,7 +12,7 @@ PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Fresh Tube</title>
+<title>{title}</title>
 <style>
 html, body {{ margin: 0; height: 100%; background: #000; overflow:hidden }}
 iframe {{ position: fixed; inset: 0; width: 100%; height: 100%; border: 0 }}
@@ -25,19 +25,26 @@ iframe {{ position: fixed; inset: 0; width: 100%; height: 100%; border: 0 }}
 """
 
 
-def page_html(video_id):
-    return PAGE.format(src=EMBED_URL.format(video_id))
+def window_title(video_id, port):
+    """The page's title, unique per window: the helper finds the window by it when the browser opened the page
+    in an instance it already had running (so the pid `play` launched is not the window's)."""
+    return f"Fresh Tube {video_id} :{port}"
+
+
+def page_html(video_id, port):
+    return PAGE.format(title=window_title(video_id, port), src=EMBED_URL.format(video_id))
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
     video_id = ""
+    port = 0
 
     def do_GET(self):
         if self.path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
             return
-        body = page_html(self.video_id).encode("utf-8")
+        body = page_html(self.video_id, self.port).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -61,7 +68,7 @@ class PageServer(http.server.HTTPServer):
 
 def serve(sock, video_id):
     """Serve the page for `video_id` on `sock` from a daemon thread; returns the server."""
-    handler = type("PageHandler", (Handler,), {"video_id": video_id})
+    handler = type("PageHandler", (Handler,), {"video_id": video_id, "port": sock.getsockname()[1]})
     server = PageServer(sock, handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server

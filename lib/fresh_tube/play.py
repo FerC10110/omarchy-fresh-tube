@@ -206,17 +206,21 @@ def pid_alive(pid):
     return True
 
 
-def find_window(pid):
-    """The hyprctl client of `pid`, waiting up to WINDOW_WAIT_SECONDS; None without Hyprland or a window."""
+def find_window(pid, title=None):
+    """The hyprctl client of `pid`, or of the window titled `title` (a browser may open our page in an instance
+    it already had running, so the pid we launched dies without a window), waiting up to WINDOW_WAIT_SECONDS;
+    None without Hyprland or a window."""
     deadline = monotonic() + WINDOW_WAIT_SECONDS
     while True:
         clients = hyprctl("clients")
         if clients is None:
             return None
         for client in clients:
-            if isinstance(client, dict) and client.get("pid") == pid and client.get("mapped", True):
+            if not isinstance(client, dict) or not client.get("mapped", True):
+                continue
+            if client.get("pid") == pid or (title and client.get("title") == title):
                 return client
-        if not pid_alive(pid) or monotonic() >= deadline:
+        if (title is None and not pid_alive(pid)) or monotonic() >= deadline:
             return None
         sleep(WINDOW_POLL_SECONDS)
 

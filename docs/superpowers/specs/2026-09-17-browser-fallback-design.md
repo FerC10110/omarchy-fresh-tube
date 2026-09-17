@@ -68,6 +68,12 @@ Cualquier otro reproductor que no sea mpv ni navegador recibe solo la URL, como 
 
 ### Ubicación y tamaño de la ventana del navegador
 
+Chromium reutiliza una instancia abierta del perfil (la ventana de `login` u otro video): el pid
+lanzado termina enseguida y la ventana pertenece a la instancia vieja. Por eso la página servida
+lleva el título `Fresh Tube <videoId> :<puerto>`, único por ventana, y `place-window` busca la
+ventana por pid o por ese título (`find_window(pid, title)`), y la vigila por el pid de la ventana
+que encontró, no por el lanzado.
+
 `place-window <pid> [--resize WxH] [--watch]`:
 
 - `--resize WxH`: después de flotar y mover, `hyprctl dispatch resizewindowpixel exact W H,address:<address>`
@@ -119,7 +125,6 @@ open`, exit 2. Si no se puede lanzar: `Could not start <nombre>: <motivo>`, exit
 - Con el navegador no hay detección de fin: el video no sale solo de "Watch later" (✕ o `Delete`).
 - El embed arranca desde el principio; no retoma donde quedó.
 - Publicidad salvo que el usuario instale un bloqueador en el perfil.
-- Chromium reutiliza una instancia abierta del perfil: si la ventana de `login` u otra ventana del navegador del plugin sigue abierta, el video nuevo se abre ahí, sin colocar ni redimensionar, y su tamaño no se recuerda (el pid nuevo termina enseguida y `place-window` sale sin hacer nada). El README pide cerrar la ventana de login antes de reproducir.
 
 ## Pruebas
 
