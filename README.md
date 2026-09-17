@@ -39,6 +39,12 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
 
 Feeds refresh every 15 minutes, when the panel opens, and on demand.
 
+Videos come from each channel's RSS feed. When YouTube's feed answers with an
+error (it goes down now and then), the plugin asks `yt-dlp` for the channel's
+newest uploads instead and the channels view says "via yt-dlp". A channel is
+kept even when neither source answers; it gets its name and videos on the next
+refresh that works.
+
 ## Settings
 
 Inline on the widget entry in `~/.config/omarchy/shell.json`:

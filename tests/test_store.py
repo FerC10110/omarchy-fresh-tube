@@ -133,7 +133,10 @@ class Feeds(StoreTest):
         state = store.load_state()
         store.update_feed(state, "UC1", PARSED, "2026-09-16T10:00:00+00:00")
         self.assertEqual(state["feeds"]["UC1"], {"fetchedAt": "2026-09-16T10:00:00+00:00", "lastError": "",
-                                                 "latest": PARSED["latest"], "recent": ["new", "old"]})
+                                                 "source": "feed", "latest": PARSED["latest"],
+                                                 "recent": ["new", "old"]})
+        store.update_feed(state, "UC3", PARSED, "2026-09-16T10:00:00+00:00", "yt-dlp")
+        self.assertEqual(state["feeds"]["UC3"]["source"], "yt-dlp")
         store.set_feed_error(state, "UC1", "timed out")
         self.assertEqual(state["feeds"]["UC1"]["lastError"], "timed out")
         self.assertEqual(state["feeds"]["UC1"]["latest"], PARSED["latest"])

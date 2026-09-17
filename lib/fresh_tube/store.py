@@ -91,12 +91,27 @@ def find_channel(channels, channel_id):
     return None
 
 
-def add_channel(channels, channel_id, name):
+def add_channel(channels, channel_id, name, name_pending=False):
     if find_channel(channels, channel_id):
         raise FreshTubeError("Already added", DUPLICATE)
     channel = {"id": channel_id, "name": name, "url": CHANNEL_URL.format(channel_id), "addedAt": now_iso()}
+    if name_pending:
+        # A placeholder until some source tells us the real name (see fill_pending_names).
+        channel["namePending"] = True
     channels.append(channel)
     return channel
+
+
+def fill_pending_names(channels, names):
+    """Replace placeholder names with the ones in `names` ({channel_id: name}); True when anything changed."""
+    changed = False
+    for channel in channels:
+        name = names.get(channel.get("id"), "")
+        if channel.get("namePending") and name:
+            channel["name"] = name
+            del channel["namePending"]
+            changed = True
+    return changed
 
 
 def remove_channel(channels, channel_id):
@@ -197,8 +212,8 @@ def prune_seen(state):
     state["seen"] = [s for s in state["seen"] if s in keep]
 
 
-def update_feed(state, channel_id, parsed, fetched_at):
-    state["feeds"][channel_id] = {"fetchedAt": fetched_at, "lastError": "",
+def update_feed(state, channel_id, parsed, fetched_at, source="feed"):
+    state["feeds"][channel_id] = {"fetchedAt": fetched_at, "lastError": "", "source": source,
                                   "latest": parsed.get("latest"), "recent": list(parsed.get("recent") or [])}
 
 

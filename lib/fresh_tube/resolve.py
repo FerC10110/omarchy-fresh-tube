@@ -13,6 +13,7 @@ CHANNEL_PATH_RE = re.compile(r"youtube\.com/channel/(" + CHANNEL_ID + r")(?:[/?#
 CANONICAL_RE = re.compile(r'<link\s+rel="canonical"\s+href="https://www\.youtube\.com/channel/(' + CHANNEL_ID + r')"')
 ITEMPROP_RE = re.compile(r'<meta\s+itemprop="(?:identifier|channelId)"\s+content="(' + CHANNEL_ID + r')"')
 HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]+$")
+HANDLE_IN_TEXT_RE = re.compile(r"@[A-Za-z0-9._-]+")
 YOUTUBE_HOST_RE = re.compile(r"^(https?://)?(www\.|m\.)?(youtube\.com|youtu\.be)(/|$)", re.IGNORECASE)
 PAGE_TIMEOUT = 20
 YTDLP_TIMEOUT = 20
@@ -34,6 +35,12 @@ def normalize_input(text):
     if not re.match(r"^https?://", text, re.IGNORECASE):
         return "https://" + text
     return text
+
+
+def handle_of(text):
+    """The @handle inside whatever the user pasted, or ""."""
+    found = HANDLE_IN_TEXT_RE.search(text or "")
+    return found.group(0) if found else ""
 
 
 def direct_channel_id(url):

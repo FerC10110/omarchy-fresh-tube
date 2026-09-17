@@ -4,7 +4,7 @@ import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from . import feed, resolve, store
+from . import feed, resolve, store, ytdlp
 from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
 
 
@@ -14,7 +14,7 @@ def emit(data):
 
 def channel_payload(channel, state):
     feed_state = state["feeds"].get(channel["id"]) or {}
-    return dict(channel, lastError=feed_state.get("lastError", ""))
+    return dict(channel, lastError=feed_state.get("lastError", ""), source=feed_state.get("source", ""))
 
 
 def cmd_add(args):
@@ -23,12 +23,21 @@ def cmd_add(args):
         raise FreshTubeError("Already added", DUPLICATE)
     # Network first, files last: the fetch can take seconds and the panel may
     # write state (a seen video, a preference) in the meantime.
-    parsed = feed.fetch_feed(channel_id)
+    parsed, source, error = fetch_one({"id": channel_id})
     channels = store.load_channels()
-    channel = store.add_channel(channels, channel_id, parsed["name"] or channel_id)
+    name = (parsed or {}).get("name") or ""
+    if name:
+        channel = store.add_channel(channels, channel_id, name)
+    else:
+        # Kept anyway: the channel is real, only today's sources are silent.
+        channel = store.add_channel(channels, channel_id, resolve.handle_of(args.url) or channel_id,
+                                    name_pending=True)
     store.save_channels(channels)
     state = store.load_state()
-    store.update_feed(state, channel_id, parsed, store.now_iso())
+    if parsed is not None:
+        store.update_feed(state, channel_id, parsed, store.now_iso(), source)
+    else:
+        store.set_feed_error(state, channel_id, error)
     store.save_state(state)
     emit(channel_payload(channel, state))
     return 0
@@ -63,13 +72,20 @@ def cmd_channels(args):
 MAX_PARALLEL_FETCHES = 6
 
 
+def _failure(e):
+    return str(e) if isinstance(e, FreshTubeError) else f"{type(e).__name__}: {e}"
+
+
 def fetch_one(channel):
+    """(parsed, source, error): the RSS feed, then yt-dlp when the feed fails, else why both failed."""
     try:
-        return feed.fetch_feed(channel["id"]), ""
-    except FreshTubeError as e:
-        return None, str(e)
+        return feed.fetch_feed(channel["id"]), "feed", ""
     except Exception as e:
-        return None, f"{type(e).__name__}: {e}"
+        feed_error = _failure(e)
+    try:
+        return ytdlp.fetch_via_ytdlp(channel["id"]), "yt-dlp", ""
+    except Exception as e:
+        return None, "", f"feed: {feed_error}; yt-dlp: {_failure(e)}"
 
 
 def refresh_all(channels, cached):
@@ -83,9 +99,11 @@ def refresh_all(channels, cached):
     if channels and not cached:
         now = store.now_iso()
         any_ok = False
-        for channel, (parsed, error) in zip(channels, results):
+        names = {}
+        for channel, (parsed, source, error) in zip(channels, results):
             if parsed is not None:
-                store.update_feed(state, channel["id"], parsed, now)
+                store.update_feed(state, channel["id"], parsed, now, source)
+                names[channel["id"]] = parsed.get("name") or ""
                 any_ok = True
             else:
                 store.set_feed_error(state, channel["id"], error)
@@ -93,6 +111,8 @@ def refresh_all(channels, cached):
             state["fetchedAt"] = now
         store.prune_seen(state)
         store.save_state(state)
+        if store.fill_pending_names(channels, names):
+            store.save_channels(channels)
         offline = not any_ok
     else:
         offline = cached and bool(channels)

@@ -52,6 +52,43 @@ class Channels(CliTest):
             code = cli.main(["add", "--", text])
         return code, out.getvalue(), err.getvalue()
 
+    def add_with_no_source(self, text):
+        with mock.patch("fresh_tube.resolve.fetch_url", return_value=support.fixture("channel_page.html")), \
+             mock.patch("fresh_tube.feed.fetch_url", side_effect=FreshTubeError("HTTP 404 from feed", NETWORK)), \
+             mock.patch("fresh_tube.ytdlp.fetch_via_ytdlp", side_effect=FreshTubeError("not installed", NETWORK)), \
+             mock.patch("fresh_tube.resolve.ytdlp_channel_id", return_value=None), \
+             support.captured() as (out, err):
+            code = cli.main(["add", "--", text])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_add_keeps_the_channel_when_no_source_answers(self):
+        code, out, err = self.add_with_no_source("youtube.com/@LinusTechTips")
+        self.assertEqual(code, 0, err)
+        channel = json.loads(out)
+        self.assertEqual(channel["id"], LTT)
+        self.assertEqual(channel["name"], "@LinusTechTips")
+        self.assertEqual(channel["lastError"], "feed: HTTP 404 from feed; yt-dlp: not installed")
+        self.assertEqual(self.box.read_json(self.box.channels_file)["channels"][0]["id"], LTT)
+        self.assertEqual(self.json("refresh", "--json", "--cached")["videos"], [])
+
+    def test_add_without_a_handle_names_the_channel_by_id(self):
+        code, out, err = self.add_with_no_source("https://www.youtube.com/channel/" + LTT)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["name"], LTT)
+
+    def test_refresh_fills_in_the_name_once_a_source_answers(self):
+        self.add_with_no_source("@LinusTechTips")
+        parsed = {"name": "Linus Tech Tips", "latest": {"videoId": "v9", "title": "Nine", "thumbnail": "t9",
+                                                        "published": "2026-09-16T10:00:00+00:00"}, "recent": ["v9"]}
+        with mock.patch("fresh_tube.feed.fetch_feed", return_value=parsed), \
+             mock.patch("fresh_tube.ytdlp.fetch_via_ytdlp", side_effect=AssertionError("yt-dlp not expected")), \
+             support.captured() as (out, err):
+            self.assertEqual(cli.main(["refresh", "--json"]), 0, err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["videos"][0]["channel"], "Linus Tech Tips")
+        saved = self.box.read_json(self.box.channels_file)["channels"][0]
+        self.assertEqual(saved["name"], "Linus Tech Tips")
+        self.assertNotIn("namePending", saved)
+
     def test_add_prints_the_channel_and_caches_its_feed(self):
         code, out, err = self.add("@LinusTechTips")
         self.assertEqual(code, 0, err)
@@ -73,14 +110,6 @@ class Channels(CliTest):
         self.assertEqual(code, 4)
         self.assertEqual(err.strip(), "fresh-tube: Already added")
         self.assertEqual(len(self.json("channels", "--json")["channels"]), 1)
-
-    def test_add_reports_a_feed_that_cannot_be_fetched(self):
-        with mock.patch("fresh_tube.resolve.fetch_url", return_value=support.fixture("channel_page.html")), \
-             mock.patch("fresh_tube.feed.fetch_url", side_effect=FreshTubeError("HTTP 404 from feed", NETWORK)), \
-             support.captured() as (out, err):
-            self.assertEqual(cli.main(["add", "@LinusTechTips"]), 3)
-        self.assertIn("HTTP 404", err.getvalue())
-        self.assertEqual(self.json("channels", "--json"), {"channels": []})
 
     def test_remove(self):
         self.add("@LinusTechTips")
@@ -106,8 +135,10 @@ class Refresh(CliTest):
         return {"name": "Two", "latest": {"videoId": "v2", "title": "Second", "thumbnail": "t2",
                                           "published": "2026-09-16T10:00:00+00:00"}, "recent": ["v2"]}
 
-    def refresh(self, *extra, fetch=None):
+    def refresh(self, *extra, fetch=None, ytdlp=None):
         with mock.patch("fresh_tube.feed.fetch_feed", side_effect=fetch or self.two_feeds), \
+             mock.patch("fresh_tube.ytdlp.fetch_via_ytdlp",
+                        side_effect=ytdlp or FreshTubeError("not installed", NETWORK)), \
              support.captured() as (out, err):
             code = cli.main(["refresh", "--json", *extra])
         self.assertEqual(code, 0, err.getvalue())
@@ -143,8 +174,10 @@ class Refresh(CliTest):
         payload = self.refresh(fetch=flaky)
         self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
         self.assertFalse(payload["offline"])
-        self.assertEqual(payload["errors"], [{"channelId": "UC2", "channel": "Two", "message": "HTTP 500 from feed"}])
-        self.assertEqual(self.json("channels", "--json")["channels"][1]["lastError"], "HTTP 500 from feed")
+        self.assertEqual(payload["errors"], [{"channelId": "UC2", "channel": "Two",
+                                              "message": "feed: HTTP 500 from feed; yt-dlp: not installed"}])
+        self.assertEqual(self.json("channels", "--json")["channels"][1]["lastError"],
+                         "feed: HTTP 500 from feed; yt-dlp: not installed")
         # A later good fetch clears the error.
         self.assertEqual(self.refresh()["errors"], [])
 
@@ -189,6 +222,30 @@ class Refresh(CliTest):
         payload = self.refresh(fetch=moved_on)
         self.assertEqual([v["videoId"] for v in payload["videos"]], ["v3", "v1"])
         self.assertEqual(self.box.read_json(self.box.state_file)["seen"], [])
+
+    def test_feed_failure_falls_back_to_ytdlp(self):
+        def down(channel_id, timeout=10):
+            raise FreshTubeError("HTTP 404 from feed", NETWORK)
+        payload = self.refresh(fetch=down, ytdlp=self.two_feeds)
+        self.assertEqual([v["videoId"] for v in payload["videos"]], ["v2", "v1"])
+        self.assertEqual(payload["errors"], [])
+        self.assertFalse(payload["offline"])
+        channels = self.json("channels", "--json")["channels"]
+        self.assertEqual([c["source"] for c in channels], ["yt-dlp", "yt-dlp"])
+        self.assertEqual([c["lastError"] for c in channels], ["", ""])
+
+    def test_feed_success_never_runs_ytdlp(self):
+        payload = self.refresh(ytdlp=AssertionError("yt-dlp not expected"))
+        self.assertEqual(len(payload["videos"]), 2)
+        self.assertEqual([c["source"] for c in self.json("channels", "--json")["channels"]], ["feed", "feed"])
+
+    def test_both_sources_failing_names_both(self):
+        def down(channel_id, timeout=10):
+            raise FreshTubeError("HTTP 404 from feed", NETWORK)
+        payload = self.refresh(fetch=down, ytdlp=FreshTubeError("This channel does not exist.", NETWORK))
+        self.assertTrue(payload["offline"])
+        self.assertEqual(payload["errors"][0]["message"],
+                         "feed: HTTP 404 from feed; yt-dlp: This channel does not exist.")
 
     def test_no_channels(self):
         self.box.write_json(self.box.channels_file, {"version": 1, "channels": []})

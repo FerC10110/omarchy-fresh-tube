@@ -158,7 +158,8 @@ Item {
         Text {
           width: parent.width
           visible: text !== ""
-          text: channelRow.modelData.lastError || ""
+          text: channelRow.modelData.lastError
+                || (channelRow.modelData.source === "yt-dlp" ? "via yt-dlp (feed unavailable)" : "")
           textFormat: Text.PlainText
           elide: Text.ElideRight
           color: view.dim
