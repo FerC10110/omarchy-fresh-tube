@@ -44,6 +44,13 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   quarter of the screen wide. Move or resize it as you like: the size is
   remembered for next time, the position resets. This needs Hyprland
   (`hyprctl`); elsewhere mpv opens wherever it likes.
+- When mpv cannot open a video at all (YouTube sometimes blocks yt-dlp with a
+  "sign in to confirm you're not a bot" check), the video opens in Chromium
+  instead: app mode, no address bar, just YouTube's player, in a profile of
+  its own, placed and sized like the mpv window. Run `fresh-tube login` once
+  to sign in to YouTube in that profile (and, if you like, add an ad blocker
+  there). In the browser the video starts from the beginning and does not
+  leave Watch later by itself: use ✕ or `Delete`.
 - Middle-click the icon to refresh without opening.
 - Keyboard: ↑/↓ select, Enter plays, Delete dismisses (not a pinned video),
   P pins or unpins, Ctrl+R refreshes, Esc closes.
@@ -63,6 +70,7 @@ Inline on the widget entry in `~/.config/omarchy/shell.json`:
 | Key | Default | What it does |
 |---|---|---|
 | `playerCommand` | `mpv` | Command that gets the video URL as its last argument. |
+| `fallbackCommand` | `chromium` | Browser opened when mpv cannot open a video; empty disables it. |
 | `refreshMinutes` | `15` | Minutes between automatic refreshes. |
 
 ```sh
@@ -102,6 +110,6 @@ file in the plugin folder reloads it in the running shell; errors show in
 
 The `bin/fresh-tube` script is usable on its own: `add`, `remove`, `channels`,
 `refresh [--cached]`, `seen`, `pin`, `unpin`, `queue add|move`, `done`, `play`,
-`prefs get|set`. `channels`, `refresh` and `queue` take `--json` for machine
-output. `mpv/fresh-tube.lua` is the mpv script `play` loads; it calls `done`
-and `prefs set` back.
+`login`, `prefs get|set`. `channels`, `refresh` and `queue` take `--json` for
+machine output. `mpv/fresh-tube.lua` is the mpv script `play` loads; it calls
+`done` and `prefs set` back.

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.ferc10110.fresh-tube",
   "name": "Fresh Tube",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "Fernando Cancro",
   "license": "MIT",
   "description": "The latest unseen video of the YouTube channels you pick, one click from the bar, played in mpv.",
@@ -15,9 +15,10 @@
     "aliases": ["youtube", "fresh-tube", "videos"],
     "allowMultiple": false,
     "defaultSection": "left",
-    "defaults": { "playerCommand": "mpv", "refreshMinutes": 15 },
+    "defaults": { "playerCommand": "mpv", "fallbackCommand": "chromium", "refreshMinutes": 15 },
     "schema": [
       { "key": "playerCommand", "type": "string", "label": "Player command" },
+      { "key": "fallbackCommand", "type": "string", "label": "Fallback player when mpv fails" },
       { "key": "refreshMinutes", "type": "number", "label": "Refresh every (minutes)" }
     ]
   }

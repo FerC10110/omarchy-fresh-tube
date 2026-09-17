@@ -47,6 +47,8 @@ Panel {
   readonly property bool addingVideo: queueAddCmd.running
   readonly property string program: pluginPath("bin/fresh-tube")
   readonly property string playerCommand: String(setting("playerCommand", "mpv") || "mpv")
+  // Empty disables the fallback; the CLI only gets --fallback when there is one.
+  readonly property string fallbackCommand: String(setting("fallbackCommand", "chromium") || "")
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color dim: Qt.darker(foreground, 1.55)
@@ -121,7 +123,10 @@ Panel {
       return
     }
     pendingPlay = video
-    playCmd.start(["play", "--player", playerCommand, "--", video.videoId])
+    var args = ["play", "--player", playerCommand]
+    if (fallbackCommand !== "") args.push("--fallback", fallbackCommand)
+    args.push("--", video.videoId)
+    playCmd.start(args)
   }
 
   function dismiss(video) {
