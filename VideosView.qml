@@ -13,8 +13,9 @@ Item {
   property string selectedId: ""
   property real nowMs: Date.now()
 
-  readonly property Item focusItem: keys
-  readonly property var laterView: ({ error: "", clearInput: function() {} })
+  readonly property bool onNew: !host || host.tab === "new"
+  readonly property Item focusItem: onNew ? keys : laterView.focusItem
+  property alias laterView: laterView
   readonly property color fg: host ? host.foreground : Color.foreground
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property color urgent: host ? host.urgent : Color.urgent
@@ -56,7 +57,9 @@ Item {
 
   function handleKey(event) {
     var ctrl = (event.modifiers & Qt.ControlModifier) !== 0
-    if (event.key === Qt.Key_Down) {
+    if (ctrl && event.key === Qt.Key_Tab) {
+      host.toggleTab()
+    } else if (event.key === Qt.Key_Down) {
       moveSelection(1)
     } else if (event.key === Qt.Key_Up) {
       moveSelection(-1)
@@ -92,15 +95,28 @@ Item {
       width: parent.width
       height: Math.max(heading.implicitHeight, actions.implicitHeight)
 
-      Text {
+      Row {
         id: heading
         anchors.verticalCenter: parent.verticalCenter
-        text: "Fresh Tube"
-        textFormat: Text.PlainText
-        color: view.fg
-        font.family: view.family
-        font.pixelSize: Style.font.title
-        font.bold: true
+        spacing: Style.space(2)
+
+        Button {
+          text: view.host && view.host.videos.length > 0 ? "New (" + view.host.videos.length + ")" : "New"
+          selected: view.onNew
+          tooltipText: "New videos from your channels (Ctrl+Tab)"
+          foreground: view.fg
+          fontFamily: view.family
+          onClicked: if (view.host) view.host.tab = "new"
+        }
+
+        Button {
+          text: view.host && view.host.queueVideos.length > 0 ? "Watch later (" + view.host.queueVideos.length + ")" : "Watch later"
+          selected: !view.onNew
+          tooltipText: "Videos you saved (Ctrl+Tab)"
+          foreground: view.fg
+          fontFamily: view.family
+          onClicked: if (view.host) view.host.tab = "later"
+        }
       }
 
       Row {
@@ -156,7 +172,7 @@ Item {
     anchors.bottom: parent.bottom
     anchors.bottomMargin: Style.space(4)
     width: parent.width
-    visible: view.rows.length > 0
+    visible: view.onNew && view.rows.length > 0
     clip: true
     spacing: Style.space(2)
     boundsBehavior: Flickable.StopAtBounds
@@ -178,11 +194,22 @@ Item {
     }
   }
 
+  WatchLaterView {
+    id: laterView
+    anchors.top: upper.bottom
+    anchors.topMargin: view.gap
+    anchors.bottom: parent.bottom
+    anchors.left: parent.left
+    anchors.right: parent.right
+    visible: !view.onNew
+    host: view.host
+  }
+
   Column {
     id: empty
     anchors.centerIn: parent
     width: parent.width
-    visible: view.rows.length === 0
+    visible: view.onNew && view.rows.length === 0
     spacing: Style.space(6)
 
     readonly property bool noChannels: view.host && view.host.channelCount === 0

@@ -15,6 +15,7 @@ Rectangle {
   property real nowMs: Date.now()
   property bool pinned: false
   property bool pinsFull: false
+  property bool pinnable: true
 
   signal activated()
   signal dismissed()
@@ -23,8 +24,9 @@ Rectangle {
   readonly property color fg: host ? host.foreground : Color.foreground
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property string family: host ? host.fontFamily : Style.font.family
-  readonly property bool showPin: pinned || hover.containsMouse || selected
+  readonly property bool showPin: pinnable && (pinned || hover.containsMouse || selected)
   readonly property bool showDismiss: !pinned && (hover.containsMouse || selected)
+  readonly property real bodyWidth: content.x + thumb.width + content.spacing + textColumn.width
 
   implicitHeight: Math.max(thumb.height, textColumn.implicitHeight) + Style.space(12)
   radius: Style.cornerRadius
@@ -86,7 +88,7 @@ Rectangle {
 
       Text {
         width: parent.width
-        text: row.video ? row.video.channel + " · " + Model.relativeTime(row.video.published, row.nowMs) : ""
+        text: row.video ? row.video.channel + " · " + Model.relativeTime(row.video.published || row.video.addedAt, row.nowMs) : ""
         textFormat: Text.PlainText
         elide: Text.ElideRight
         color: row.dim
