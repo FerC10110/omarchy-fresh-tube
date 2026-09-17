@@ -31,9 +31,11 @@ What it does:
 omarchy plugin add https://github.com/FerC10110/omarchy-fresh-tube.git --enable
 ```
 
-The bar gains a 󰗃 button on the left. It needs `mpv` (with `yt-dlp`, which
-mpv uses for YouTube) and, only as a fallback when a channel page gives
-nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
+The bar gains a 󰗃 button on the left. It needs `python3`, `mpv` (with
+`yt-dlp`, which mpv uses for YouTube) and, only as a fallback when a channel
+page gives nothing away, `yt-dlp` on `PATH`; all ship with Omarchy. The
+browser fallback runs `chromium`; Settings below picks another browser or
+turns it off.
 
 ## Use
 
@@ -118,6 +120,16 @@ Everything comes from each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`): no API key, no login, and no
 sync with your YouTube account.
 
+## Remove
+
+```sh
+omarchy plugin remove io.github.ferc10110.fresh-tube
+```
+
+Your channels and state stay on disk: delete `~/.config/fresh-tube/` and
+`~/.local/state/fresh-tube/` (the browser profile lives there too) to wipe
+them.
+
 ## Development
 
 ```sh
@@ -134,3 +146,8 @@ The `bin/fresh-tube` script is usable on its own: `add`, `remove`, `channels`,
 `login`, `prefs get|set`. `channels`, `refresh` and `queue` take `--json` for
 machine output. `mpv/fresh-tube.lua` is the mpv script `play` loads; it calls
 `done` and `prefs set` back.
+
+## License
+
+MIT, see `LICENSE`. `THIRD_PARTY_NOTICES.md` credits the two MIT-licensed
+files `FeedPopup.qml` adapts.
