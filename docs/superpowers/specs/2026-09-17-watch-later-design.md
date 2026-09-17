@@ -29,8 +29,9 @@ pasa por un comando nuevo:
     la próxima vez; al llegar al final, mpv borra esa marca.
   - `--force-window=immediate`: la ventana aparece antes de que cargue el stream.
   - `--geometry=<W>x<H>`: tamaño inicial. `W`/`H` son las preferencias `playerWidth` y
-    `playerHeight`; si no existen, `W` = ancho lógico del monitor enfocado / 4 (redondeado) y
-    `H` = `W` × 9 / 16; ancho lógico = `width / scale` de `hyprctl monitors -j`. Sin
+    `playerHeight`; si no existen, `W` = ancho físico del monitor enfocado (`width` de
+    `hyprctl monitors -j`) / 4 (redondeado) y `H` = `W` × 9 / 16, porque mpv 0.41 mide
+    `--geometry` en píxeles físicos (`hidpi-window-scale=no` por defecto). Sin
     `hyprctl`, el default es 860×484.
   - `--script=<plugin>/mpv/fresh-tube.lua` y
     `--script-opt=fresh_tube-id=<videoId>` `--script-opt=fresh_tube-bin=<ruta absoluta de bin/fresh-tube>`

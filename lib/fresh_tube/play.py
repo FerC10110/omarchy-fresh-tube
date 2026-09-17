@@ -41,7 +41,7 @@ def build_argv(player_command, video_id, size):
 
 
 def default_size(monitors):
-    """A quarter of the focused monitor's logical width, 16:9; DEFAULT_SIZE when that cannot be known."""
+    """A quarter of the focused monitor's physical width, 16:9; DEFAULT_SIZE when that cannot be known."""
     if not monitors:
         return DEFAULT_SIZE
     focused = next((m for m in monitors if isinstance(m, dict) and m.get("focused")), None)
@@ -49,8 +49,7 @@ def default_size(monitors):
     if not monitor:
         return DEFAULT_SIZE
     try:
-        scale = float(monitor.get("scale") or 1) or 1.0
-        width = int(round(int(monitor.get("width")) / scale / 4))
+        width = int(round(int(monitor.get("width")) / 4))
     except (TypeError, ValueError):
         return DEFAULT_SIZE
     if width <= 0:

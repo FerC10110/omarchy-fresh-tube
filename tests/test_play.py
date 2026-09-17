@@ -49,8 +49,8 @@ class DefaultSize(unittest.TestCase):
     def test_quarter_of_the_focused_monitor_logical_width(self):
         self.assertEqual(play.default_size(MONITORS), (480, 270))
 
-    def test_scale_is_honoured_and_first_monitor_is_the_fallback(self):
-        self.assertEqual(play.default_size([dict(MONITORS[1], focused=True)]), (320, 180))
+    def test_physical_width_is_used_and_first_monitor_is_the_fallback(self):
+        self.assertEqual(play.default_size([dict(MONITORS[1], focused=True)]), (640, 360))
         self.assertEqual(play.default_size([dict(MONITORS[0], focused=False)]), (480, 270))
 
     def test_no_or_bad_monitors(self):
