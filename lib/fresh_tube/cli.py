@@ -4,7 +4,7 @@ import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from . import feed, resolve, store, videos, ytdlp
+from . import feed, play, resolve, store, videos, ytdlp
 from .errors import DUPLICATE, GENERAL, UNKNOWN, USAGE, FreshTubeError
 
 
@@ -221,6 +221,31 @@ def cmd_done(args):
     return 0
 
 
+def cmd_play(args):
+    """Launch the player for a video; seen only once the player is running."""
+    if not videos.VIDEO_ID_RE.match(args.video_id or ""):
+        raise FreshTubeError("That doesn't look like a YouTube video id", USAGE)
+    state = store.load_state()
+    prefs = state["prefs"]
+    if "playerWidth" in prefs and "playerHeight" in prefs:
+        size = (prefs["playerWidth"], prefs["playerHeight"])
+    else:
+        size = play.default_size(play.hyprctl("monitors"))
+    play.start(args.player, args.video_id, size)
+    store.mark_seen(state, args.video_id)
+    store.save_state(state)
+    emit({"played": args.video_id})
+    return 0
+
+
+def cmd_place_window(args):
+    """Hidden helper spawned by `play`: wait for the player's window and put it below the bar."""
+    window = play.find_window(args.pid)
+    if window is not None:
+        play.place_window(window)
+    return 0
+
+
 def cmd_prefs(args):
     state = store.load_state()
     if args.action == "set":
@@ -283,12 +308,26 @@ def build_parser():
     p.add_argument("video_id")
     p.set_defaults(func=cmd_done)
 
+    p = sub.add_parser("play", help="play a video in the configured player and mark it seen")
+    p.add_argument("--player", default="mpv", help="player command line (default: mpv)")
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_play)
+
+    p = sub.add_parser("place-window", help=argparse.SUPPRESS)
+    p.add_argument("pid", type=int)
+    p.set_defaults(func=cmd_place_window)
+
     return parser, sub
 
 
 def main(argv=None):
     parser, _ = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as e:
+        # argparse already printed its own usage/error message; just surface the code
+        # instead of letting it tear down an in-process caller (e.g. the test suite).
+        return e.code if isinstance(e.code, int) else GENERAL
     try:
         return args.func(args)
     except FreshTubeError as e:
