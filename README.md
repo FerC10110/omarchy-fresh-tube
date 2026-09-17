@@ -26,8 +26,8 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
 - Click 󰕲 and paste a channel: `https://www.youtube.com/@handle`, a
   `/channel/UC…` link, a bare `@handle`, or even a video link (its channel is
   added). Remove a channel with ✕.
-- Click a video to play it in mpv. Hover a row and click ✕ to mark it seen
-  without playing.
+- Click a video to play it, normally in mpv. Hover a row and click ✕ to mark
+  it seen without playing.
 - 󰐃 in the header pins the panel: it stays open while you click elsewhere or
   open other bar panels. Drag the ◢ corner to resize. Both are remembered.
 - 󰐃 on a row pins that video (up to three): it moves to the top and stays
@@ -49,8 +49,13 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
   instead: app mode, no address bar, just YouTube's player, in a profile of
   its own, placed and sized like the mpv window. Run `fresh-tube login` once
   to sign in to YouTube in that profile (and, if you like, add an ad blocker
-  there). In the browser the video starts from the beginning and does not
-  leave Watch later by itself: use ✕ or `Delete`.
+  there); with another browser as `fallbackCommand`, run
+  `fresh-tube login --player <that command>`. Close the login window before
+  playing: while any window of that profile is open, Chromium reuses it and
+  the new video is neither placed nor sized. In the browser the video starts
+  from the beginning and does not leave Watch later by itself: use ✕ or
+  `Delete`. To try the browser without waiting for mpv to fail, run
+  `fresh-tube play --player chromium <videoId>`.
 - Middle-click the icon to refresh without opening.
 - Keyboard: ↑/↓ select, Enter plays, Delete dismisses (not a pinned video),
   P pins or unpins, Ctrl+R refreshes, Esc closes.

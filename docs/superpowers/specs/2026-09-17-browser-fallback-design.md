@@ -111,6 +111,7 @@ open`, exit 2. Si no se puede lanzar: `Could not start <nombre>: <motivo>`, exit
 - Con el navegador no hay detección de fin: el video no sale solo de "Watch later" (✕ o `Delete`).
 - El embed arranca desde el principio; no retoma donde quedó.
 - Publicidad salvo que el usuario instale un bloqueador en el perfil.
+- Chromium reutiliza una instancia abierta del perfil: si la ventana de `login` u otra ventana del navegador del plugin sigue abierta, el video nuevo se abre ahí, sin colocar ni redimensionar, y su tamaño no se recuerda (el pid nuevo termina enseguida y `place-window` sale sin hacer nada). El README pide cerrar la ventana de login antes de reproducir.
 
 ## Pruebas
 

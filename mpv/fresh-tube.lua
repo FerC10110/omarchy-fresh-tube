@@ -68,9 +68,10 @@ mp.observe_property("eof-reached", "bool", function(_, reached)
 end)
 
 -- Only sizes of a window that shows a video count: the black window of a
--- video that never loaded is not the size the user chose.
+-- video that never loaded is not the size the user chose. A fullscreen window
+-- reports the monitor's size, not the size the user chose.
 mp.observe_property("osd-dimensions", "native", function(_, dims)
-  if loaded and dims and dims.w and dims.h and dims.w > 0 and dims.h > 0 then
+  if loaded and not mp.get_property_native("fullscreen") and dims and dims.w and dims.h and dims.w > 0 and dims.h > 0 then
     last_w, last_h = math.floor(dims.w), math.floor(dims.h)
   end
 end)

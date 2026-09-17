@@ -10,7 +10,7 @@ from .store import state_dir
 from .videos import WATCH_URL
 
 DEFAULT_SIZE = (860, 484)
-WINDOW_WAIT_SECONDS = 10
+WINDOW_WAIT_SECONDS = 30  # a browser's cold start can be slow; the wait ends early when the player dies
 WINDOW_POLL_SECONDS = 0.1
 WATCH_POLL_SECONDS = 1
 HYPRCTL_TIMEOUT = 5
@@ -239,6 +239,8 @@ def watch_window(client, pid):
         current = next((c for c in clients if isinstance(c, dict) and c.get("address") == address), None)
         if current is None:
             return last
-        last = window_size(current) or last
+        # A fullscreen window reports the monitor's size; that is not the size the user chose.
+        if not current.get("fullscreen"):
+            last = window_size(current) or last
         if not pid_alive(pid):
             return last

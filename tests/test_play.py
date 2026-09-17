@@ -145,7 +145,7 @@ class Placement(unittest.TestCase):
                                            ("movewindowpixel", "exact 1920 0,address:0x55aa")])
 
     def test_waits_for_the_window_then_gives_up(self):
-        clocks = iter([0.0, 0.0, 5.0, 11.0])
+        clocks = iter([0.0, 0.0, play.WINDOW_WAIT_SECONDS - 5.0, play.WINDOW_WAIT_SECONDS + 1])
         with mock.patch("fresh_tube.play.hyprctl", return_value=[client(8)]) as hyprctl, \
              mock.patch("fresh_tube.play.monotonic", side_effect=lambda: next(clocks)):
             self.assertIsNone(play.find_window(7))
@@ -192,6 +192,12 @@ class Placement(unittest.TestCase):
         alive = iter([True, True, False])
         with mock.patch("fresh_tube.play.hyprctl", side_effect=polls), \
              mock.patch("fresh_tube.play.pid_alive", side_effect=lambda pid: next(alive)):
+            self.assertEqual(play.watch_window(client(7), 7), (640, 360))
+
+    def test_watch_ignores_the_size_of_a_fullscreen_window(self):
+        polls = [[dict(client(7), size=[640, 360])], [dict(client(7), size=[1920, 1054], fullscreen=2)],
+                 [dict(client(8), address="0x99")]]
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=polls):
             self.assertEqual(play.watch_window(client(7), 7), (640, 360))
 
     def test_watch_without_hyprland_or_a_size_gives_none(self):
@@ -320,6 +326,7 @@ class PlaceWindowCommand(unittest.TestCase):
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7", "--resize", "640x360", "--watch"]), 0)
         self.place.assert_not_called()
+        self.resize.assert_not_called()
         self.watch.assert_not_called()
 
     def test_resize_and_watch_save_the_browser_size(self):
@@ -332,6 +339,12 @@ class PlaceWindowCommand(unittest.TestCase):
         self.assertEqual((prefs["browserWidth"], prefs["browserHeight"]), (700, 400))
 
     def test_watch_without_a_size_saves_nothing(self):
+        with support.captured():
+            self.assertEqual(cli.main(["place-window", "7", "--watch"]), 0)
+        self.assertNotIn("browserWidth", store.load_state()["prefs"])
+
+    def test_a_size_outside_the_limits_saves_nothing(self):
+        self.watch.return_value = (120, 68)
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7", "--watch"]), 0)
         self.assertNotIn("browserWidth", store.load_state()["prefs"])

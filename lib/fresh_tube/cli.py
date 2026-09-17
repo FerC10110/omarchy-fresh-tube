@@ -247,8 +247,11 @@ def cmd_place_window(args):
     if args.watch:
         size = play.watch_window(window, args.pid)
         if size:
-            with store.state_transaction() as state:
-                store.set_prefs(state, [("browserWidth", str(size[0])), ("browserHeight", str(size[1]))])
+            try:
+                with store.state_transaction() as state:
+                    store.set_prefs(state, [("browserWidth", str(size[0])), ("browserHeight", str(size[1]))])
+            except FreshTubeError:
+                pass  # a size outside the allowed range is not worth remembering
     return 0
 
 
