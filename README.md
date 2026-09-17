@@ -33,6 +33,16 @@ nothing away, `yt-dlp` on `PATH`. Both ship with Omarchy.
 - 󰐃 on a row pins that video (up to three): it moves to the top and stays
   listed after you play it, for the album you play all week or the long talk
   you watch over several days. Unpin it when you are done.
+- The `Watch later` tab is your own list: paste a video link (watch, youtu.be,
+  shorts, embed or live) and it lands at the bottom with its title, channel
+  and thumbnail. Drag a row up or down to reorder (press on its thumbnail or title
+  and move), or press `Ctrl+↑` / `Ctrl+↓`. A video leaves the list when mpv reaches its end; close mpv early
+  and it stays, resuming where you left off next time. `✕` or `Delete` marks
+  it seen and removes it. `Ctrl+Tab` switches tabs.
+- Playing opens mpv as a small floating window below the bar, left-aligned, a
+  quarter of the screen wide. Move or resize it as you like: the size is
+  remembered for next time, the position resets. This needs Hyprland
+  (`hyprctl`); elsewhere mpv opens wherever it likes.
 - Middle-click the icon to refresh without opening.
 - Keyboard: ↑/↓ select, Enter plays, Delete dismisses (not a pinned video),
   P pins or unpins, Ctrl+R refreshes, Esc closes.
@@ -58,6 +68,9 @@ Inline on the widget entry in `~/.config/omarchy/shell.json`:
 omarchy bar set io.github.ferc10110.fresh-tube playerCommand "mpv --profile=yt"
 ```
 
+With a player other than `mpv`, videos still play but the end of a video is
+not detected and the window size is not remembered.
+
 ## Keybinding
 
 ```lua
@@ -68,7 +81,7 @@ o.bind("SUPER + SHIFT + Y", "Fresh Tube", "omarchy-shell io.github.ferc10110.fre
 
 - `~/.config/fresh-tube/channels.json`: your channels.
 - `~/.local/state/fresh-tube/state.json`: seen videos, cached feeds, pinned
-  videos, popup size and pin.
+  videos, the Watch later list, popup and player sizes.
 - `XDG_CONFIG_HOME` and `XDG_STATE_HOME` override those locations.
 
 Everything comes from each channel's public RSS feed
@@ -87,5 +100,7 @@ file in the plugin folder reloads it in the running shell; errors show in
 `quickshell log -p /usr/share/omarchy/shell -t 40`.
 
 The `bin/fresh-tube` script is usable on its own: `add`, `remove`, `channels`,
-`refresh [--cached]`, `seen`, `pin`, `unpin`, `prefs get|set`. `channels` and
-`refresh` take `--json` for machine output.
+`refresh [--cached]`, `seen`, `pin`, `unpin`, `queue add|move`, `done`, `play`,
+`prefs get|set`. `channels`, `refresh` and `queue` take `--json` for machine
+output. `mpv/fresh-tube.lua` is the mpv script `play` loads; it calls `done`
+and `prefs set` back.
