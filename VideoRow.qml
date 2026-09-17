@@ -116,7 +116,7 @@ Rectangle {
       visible: row.showDismiss
       anchors.verticalCenter: parent.verticalCenter
       iconText: "󰅖"
-      tooltipText: "Mark as seen (Delete)"
+      tooltipText: row.pinnable ? "Mark as seen (Delete)" : "Remove from the list (Delete)"
       foreground: row.fg
       fontFamily: row.family
       onClicked: row.dismissed()
