@@ -1,6 +1,7 @@
 """Launch the player for one video and, under Hyprland, put its window below the bar."""
 import json
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -15,7 +16,9 @@ DEFAULT_SIZE = (860, 484)
 WINDOW_WAIT_SECONDS = 30  # a browser's cold start can be slow; the wait ends early when the player dies
 WINDOW_POLL_SECONDS = 0.1
 WATCH_POLL_SECONDS = 1
+SETTLE_SECONDS = 0.3
 HYPRCTL_TIMEOUT = 5
+ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]+$")
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT_PATH = os.path.join(PLUGIN_DIR, "mpv", "fresh-tube.lua")
 BIN_PATH = os.path.join(PLUGIN_DIR, "bin", "fresh-tube")
@@ -189,11 +192,24 @@ def hyprctl(what):
         return None
 
 
-def dispatch(*args):
+def dispatch(lua):
+    """Run a dispatcher; Hyprland 0.56 takes it as Lua, e.g. `hl.dsp.window.move({ ... })`."""
     try:
-        subprocess.run(["hyprctl", "dispatch", *args], capture_output=True, text=True, timeout=HYPRCTL_TIMEOUT)
+        subprocess.run(["hyprctl", "dispatch", lua], capture_output=True, text=True, timeout=HYPRCTL_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+def window_dispatch(name, address, **options):
+    """The Lua for `hl.dsp.window.<name>` on the window at `address`, with `options` as its table."""
+    fields = [f"window = 'address:{address}'"]
+    for key, value in options.items():
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        elif isinstance(value, str):
+            value = f"'{value}'"
+        fields.append(f"{key} = {value}")
+    return f"hl.dsp.window.{name}({{ {', '.join(fields)} }})"
 
 
 def pid_alive(pid):
@@ -225,8 +241,11 @@ def find_window(pid, title=None):
         sleep(WINDOW_POLL_SECONDS)
 
 
-def place_window(client):
-    """Float the window if needed and move it to the top-left of its monitor's usable area."""
+def place_window(client, size=None):
+    """Float the window if needed, size it if asked, and move it to the top-left of its monitor's usable area."""
+    address = str(client.get("address") or "")
+    if not ADDRESS_RE.match(address):
+        return
     monitors = hyprctl("monitors") or []
     monitor = next((m for m in monitors if isinstance(m, dict) and m.get("id") == client.get("monitor")), None)
     if monitor is None:
@@ -237,14 +256,20 @@ def place_window(client):
         y = int(monitor.get("y", 0)) + int(reserved[1])
     except (TypeError, ValueError, IndexError):
         return
-    target = f"address:{client.get('address')}"
     if not client.get("floating"):
-        dispatch("setfloating", target)
-    dispatch("movewindowpixel", f"exact {x} {y},{target}")
-
-
-def resize_window(client, size):
-    dispatch("resizewindowpixel", f"exact {size[0]} {size[1]},address:{client.get('address')}")
+        dispatch(window_dispatch("float", address, action="on"))
+    move = window_dispatch("move", address, exact=True, x=x, y=y)
+    if size:
+        # Resizing keeps the window's centre, so size first and move after.
+        dispatch(window_dispatch("resize", address, exact=True, x=int(size[0]), y=int(size[1])))
+    dispatch(move)
+    if size:
+        # A client may refuse the size (browsers have a minimum), which re-centres the window after the move.
+        sleep(SETTLE_SECONDS)
+        clients = hyprctl("clients") or []
+        current = next((c for c in clients if isinstance(c, dict) and c.get("address") == address), None)
+        if current and current.get("at") != [x, y]:
+            dispatch(move)
 
 
 def window_size(client):

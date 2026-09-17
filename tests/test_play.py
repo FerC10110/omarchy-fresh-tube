@@ -149,13 +149,42 @@ class Placement(unittest.TestCase):
     def test_moves_below_the_bar_of_its_monitor(self):
         with mock.patch("fresh_tube.play.hyprctl", side_effect=lambda what: {"clients": [client(7)], "monitors": MONITORS}[what]):
             play.place_window(play.find_window(7))
-        self.assertEqual(self.dispatches, [("movewindowpixel", "exact 0 26,address:0x55aa")])
+        self.assertEqual(self.dispatches, [("hl.dsp.window.move({ window = 'address:0x55aa', exact = true, x = 0, y = 26 })",)])
 
     def test_floats_first_when_tiled_and_uses_the_monitor_origin(self):
         with mock.patch("fresh_tube.play.hyprctl", side_effect=lambda what: {"clients": [client(7, floating=False, monitor=1)], "monitors": MONITORS}[what]):
             play.place_window(play.find_window(7))
-        self.assertEqual(self.dispatches, [("setfloating", "address:0x55aa"),
-                                           ("movewindowpixel", "exact 1920 0,address:0x55aa")])
+        self.assertEqual(self.dispatches, [("hl.dsp.window.float({ window = 'address:0x55aa', action = 'on' })",),
+                                           ("hl.dsp.window.move({ window = 'address:0x55aa', exact = true, x = 1920, y = 0 })",)])
+
+    def test_sizes_before_moving_because_resizing_keeps_the_centre(self):
+        settled = dict(client(7), at=[0, 26], size=[640, 360])
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=lambda what: {"clients": [settled], "monitors": MONITORS}[what]):
+            play.place_window(play.find_window(7), (640, 360))
+        self.assertEqual(self.dispatches, [("hl.dsp.window.resize({ window = 'address:0x55aa', exact = true, x = 640, y = 360 })",),
+                                           ("hl.dsp.window.move({ window = 'address:0x55aa', exact = true, x = 0, y = 26 })",)])
+
+    def test_moves_again_when_the_client_shifted_the_window(self):
+        # Browsers have a minimum size; a refused size re-centres the window after our move.
+        polls = iter([[client(7)], MONITORS, [dict(client(7), at=[-10, 26], size=[500, 270])]])
+        with mock.patch("fresh_tube.play.hyprctl", side_effect=lambda what: next(polls)):
+            play.place_window(play.find_window(7), (480, 270))
+        move = ("hl.dsp.window.move({ window = 'address:0x55aa', exact = true, x = 0, y = 26 })",)
+        self.assertEqual(self.dispatches, [("hl.dsp.window.resize({ window = 'address:0x55aa', exact = true, x = 480, y = 270 })",),
+                                           move, move])
+
+    def test_refuses_an_address_that_is_not_hex(self):
+        with mock.patch("fresh_tube.play.hyprctl", return_value=MONITORS):
+            play.place_window(dict(client(7), address="0x55aa' }); os.exit(1) --"), (640, 360))
+        self.assertEqual(self.dispatches, [])
+
+    def test_dispatch_runs_lua_through_hyprctl(self):
+        mock.patch.stopall()
+        with mock.patch("fresh_tube.play.subprocess.run", return_value=mock.Mock(returncode=0)) as run:
+            play.dispatch("hl.dsp.window.float({ window = 'address:0x55aa', action = 'on' })")
+        self.assertEqual(run.call_args.args[0], ["hyprctl", "dispatch", "hl.dsp.window.float({ window = 'address:0x55aa', action = 'on' })"])
+        with mock.patch("fresh_tube.play.subprocess.run", side_effect=FileNotFoundError):
+            play.dispatch("hl.dsp.window.float({ window = 'address:0x55aa', action = 'on' })")  # no Hyprland: silent
 
     def test_waits_for_the_window_then_gives_up(self):
         clocks = iter([0.0, 0.0, play.WINDOW_WAIT_SECONDS - 5.0, play.WINDOW_WAIT_SECONDS + 1])
@@ -201,10 +230,6 @@ class Placement(unittest.TestCase):
             self.assertIsNone(play.hyprctl("monitors"))
         with mock.patch("fresh_tube.play.subprocess.run", return_value=mock.Mock(returncode=0, stdout="nope")):
             self.assertIsNone(play.hyprctl("monitors"))
-
-    def test_resize_dispatches_an_exact_size(self):
-        play.resize_window(client(7), (640, 360))
-        self.assertEqual(self.dispatches, [("resizewindowpixel", "exact 640 360,address:0x55aa")])
 
     def test_watch_returns_the_last_size_once_the_window_is_gone(self):
         polls = [[dict(client(7), size=[640, 360])], [dict(client(7), size=[700, 400])],
@@ -350,15 +375,13 @@ class PlaceWindowCommand(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
         self.find = mock.patch("fresh_tube.play.find_window", return_value=client(7)).start()
         self.place = mock.patch("fresh_tube.play.place_window").start()
-        self.resize = mock.patch("fresh_tube.play.resize_window").start()
         self.watch = mock.patch("fresh_tube.play.watch_window", return_value=None).start()
 
     def test_places_the_window_of_the_given_pid(self):
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7"]), 0)
         self.find.assert_called_once_with(7, None)
-        self.place.assert_called_once_with(client(7))
-        self.resize.assert_not_called()
+        self.place.assert_called_once_with(client(7), None)
         self.watch.assert_not_called()
 
     def test_no_window_means_nothing_happens(self):
@@ -366,14 +389,13 @@ class PlaceWindowCommand(unittest.TestCase):
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7", "--resize", "640x360", "--watch"]), 0)
         self.place.assert_not_called()
-        self.resize.assert_not_called()
         self.watch.assert_not_called()
 
     def test_resize_and_watch_save_the_browser_size(self):
         self.watch.return_value = (700, 400)
         with support.captured():
             self.assertEqual(cli.main(["place-window", "7", "--resize", "640x360", "--watch"]), 0)
-        self.resize.assert_called_once_with(client(7), (640, 360))
+        self.place.assert_called_once_with(client(7), (640, 360))
         self.watch.assert_called_once_with(client(7), 7)
         prefs = store.load_state()["prefs"]
         self.assertEqual((prefs["browserWidth"], prefs["browserHeight"]), (700, 400))

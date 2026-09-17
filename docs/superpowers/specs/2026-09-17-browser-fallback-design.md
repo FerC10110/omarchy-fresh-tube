@@ -68,6 +68,14 @@ Cualquier otro reproductor que no sea mpv ni navegador recibe solo la URL, como 
 
 ### Ubicación y tamaño de la ventana del navegador
 
+Hyprland 0.56 (el de Omarchy) toma `hyprctl dispatch` como Lua: los dispatchers clásicos
+(`setfloating`, `movewindowpixel`, `resizewindowpixel`) ya no existen y `place-window` usa
+`hl.dsp.window.float({ window = 'address:<addr>', action = 'on' })` (idempotente; sin `action`
+es un toggle), `hl.dsp.window.resize({ window = …, exact = true, x = W, y = H })` y
+`hl.dsp.window.move({ window = …, exact = true, x = X, y = Y })`, en ese orden, porque
+`resize` conserva el centro de la ventana. La dirección se valida como hexadecimal antes de
+interpolarla en el Lua.
+
 Chromium reutiliza una instancia abierta del perfil (la ventana de `login` u otro video): el pid
 lanzado termina enseguida y la ventana pertenece a la instancia vieja. Por eso la página servida
 lleva el título `Fresh Tube <videoId> :<puerto>`, único por ventana, y `place-window` busca la
@@ -76,7 +84,7 @@ que encontró, no por el lanzado.
 
 `place-window <pid> [--resize WxH] [--watch]`:
 
-- `--resize WxH`: después de flotar y mover, `hyprctl dispatch resizewindowpixel exact W H,address:<address>`
+- `--resize WxH`: después de flotar, `hl.dsp.window.resize({ window = 'address:<addr>', exact = true, x = W, y = H })` y recién entonces `move` (ver arriba).
   (una ventana recién flotada no conserva el `--window-size`).
 - `--watch`: después de ubicar, consulta `hyprctl clients -j` cada segundo hasta que la ventana
   desaparece o el proceso muere; guarda el último `size` no nulo como `browserWidth`/`browserHeight`
@@ -134,7 +142,7 @@ Python (`unittest`, sin red, sin mpv, sin navegador ni hyprctl reales):
   navegador completo (perfil bajo `$XDG_STATE_HOME`, `--window-size`, `--app` con el embed);
   `--fallback` agrega `--script-opt=fresh_tube-fallback=<CMD>` solo con mpv; tamaño del
   navegador desde `browserWidth/Height`, desde el monitor (con `scale`) y 860×484;
-  `place-window --resize` despacha `resizewindowpixel exact`; `--watch` guarda el último tamaño
+  `place-window --resize` despacha `hl.dsp.window.resize` antes de `move`; `--watch` guarda el último tamaño
   cuando la ventana desaparece y no guarda si nunca apareció; `cmd_play` con navegador lanza el
   ayudante con `--resize` y `--watch`; `login` argv y errores.
 - `test_store.py`: límites de `browserWidth`/`browserHeight`.

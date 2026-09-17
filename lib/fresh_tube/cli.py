@@ -253,9 +253,7 @@ def cmd_place_window(args):
         window = play.find_window(args.pid, title)
         if window is None:
             return 0
-        play.place_window(window)
-        if args.resize:
-            play.resize_window(window, args.resize)
+        play.place_window(window, args.resize)
         if args.watch:
             # The window's own pid: it may belong to a browser instance that was already running.
             pid = window.get("pid")
