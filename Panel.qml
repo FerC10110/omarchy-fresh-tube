@@ -269,6 +269,7 @@ Panel {
   FreshTubeCommand {
     id: cachedCmd
     program: root.program
+    queueLatest: true
     onFinished: function(code, out, err) {
       var data = root.parseJson(out)
       if (code !== 0 || !data) {
@@ -312,6 +313,7 @@ Panel {
         root.setNotice(root.lastLine(err) || "Could not mark it as seen", true)
         return
       }
+      if (root.noticeIsError) root.setNotice("", false)
       var data = root.parseJson(out)
       var id = data ? String(data.seen || "") : ""
       if (id !== "") root.removeVideo(id)
@@ -339,6 +341,7 @@ Panel {
   FreshTubeCommand {
     id: playerCheckCmd
     program: "/bin/sh"
+    queueLatest: true
     onFinished: function(code, out, err) { root.playerFound = code === 0 }
   }
 
@@ -364,12 +367,14 @@ Panel {
     onFinished: function(code, out, err) {
       if (code !== 0) {
         channelsView.error = root.lastLine(err) || "Could not add that channel"
+        root.focusCurrent()
         return
       }
       channelsView.clearInput()
       root.loadChannels()
       root.loadCached()
       root.refresh()
+      root.focusCurrent()
     }
   }
 
@@ -380,6 +385,7 @@ Panel {
       if (code !== 0) channelsView.error = root.lastLine(err) || "Could not remove that channel"
       root.loadChannels()
       root.loadCached()
+      root.focusCurrent()
     }
   }
 

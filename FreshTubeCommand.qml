@@ -11,6 +11,7 @@ Item {
   property int timeoutMs: 30000
   property bool pending: false
   readonly property bool running: pending
+  property bool queueLatest: false
 
   signal finished(int code, string out, string err)
 
@@ -21,9 +22,16 @@ Item {
   property bool _outDone: false
   property bool _errDone: false
   property bool _timedOut: false
+  property var _pending: null
 
   function start(args) {
-    if (pending) return false
+    if (pending) {
+      if (queueLatest) {
+        _pending = args
+        return true
+      }
+      return false
+    }
     _out = ""
     _err = ""
     _code = 0
@@ -45,6 +53,11 @@ Item {
     settle.stop()
     if (_timedOut) finished(1, _out, "fresh-tube: took too long and was stopped")
     else finished(_code, _out, _err)
+    if (_pending !== null) {
+      var next = _pending
+      _pending = null
+      start(next)
+    }
   }
 
   function _maybeFinish() {

@@ -55,7 +55,7 @@ omarchy bar set io.github.ferc10110.fresh-tube playerCommand "mpv --profile=yt"
 ## Keybinding
 
 ```lua
-o.bind("SUPER SHIFT", "Y", "omarchy-shell io.github.ferc10110.fresh-tube toggle")
+o.bind("SUPER + SHIFT + Y", "Fresh Tube", "omarchy-shell io.github.ferc10110.fresh-tube toggle")
 ```
 
 ## Files
