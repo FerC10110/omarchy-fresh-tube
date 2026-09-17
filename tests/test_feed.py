@@ -1,4 +1,5 @@
 import http.client
+import io
 import unittest
 import urllib.error
 from unittest import mock
@@ -43,14 +44,18 @@ class Fetch(unittest.TestCase):
         fetch.assert_called_once_with("https://www.youtube.com/feeds/videos.xml?channel_id=UC1", 3)
         self.assertEqual(parsed["latest"]["videoId"], "newest22222")
 
-    def test_http_errors_become_network_errors(self):
+    def test_http_errors_become_network_errors_and_are_closed(self):
+        raised = []
+
         def boom(request, timeout):
-            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+            raised.append(urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, io.BytesIO(b"")))
+            raise raised[-1]
         with mock.patch("fresh_tube.feed.urlopen", boom):
             with self.assertRaises(FreshTubeError) as caught:
                 feed.fetch_url("https://example.invalid/x", 1)
         self.assertEqual(caught.exception.code, NETWORK)
         self.assertIn("404", str(caught.exception))
+        self.assertTrue(raised[0].fp.closed)
 
     def test_unreachable_host_is_a_network_error(self):
         def boom(request, timeout):

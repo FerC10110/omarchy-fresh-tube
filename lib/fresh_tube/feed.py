@@ -27,6 +27,7 @@ def fetch_url(url, timeout):
         with urlopen(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as e:
+        e.close()  # the error carries the response body; drop it now, not at garbage collection
         raise FreshTubeError(f"HTTP {e.code} from {url}", NETWORK)
     except (urllib.error.URLError, socket.timeout, TimeoutError, OSError, http.client.HTTPException) as e:
         reason = getattr(e, "reason", e)
