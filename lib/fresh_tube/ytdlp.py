@@ -57,7 +57,7 @@ def parse_output(stdout):
     return {"name": name, "latest": entries[0] if entries else None, "recent": [e["videoId"] for e in entries]}
 
 
-def _last_error(stderr):
+def last_error(stderr):
     for line in reversed((stderr or "").splitlines()):
         if line.startswith("ERROR:"):
             return ERROR_PREFIX_RE.sub("", line[len("ERROR:"):].strip())
@@ -75,5 +75,5 @@ def fetch_via_ytdlp(channel_id, timeout=YTDLP_TIMEOUT):
     except OSError as e:
         raise FreshTubeError(str(e), NETWORK)
     if done.returncode != 0:
-        raise FreshTubeError(_last_error(done.stderr) or f"exit code {done.returncode}", NETWORK)
+        raise FreshTubeError(last_error(done.stderr) or f"exit code {done.returncode}", NETWORK)
     return parse_output(done.stdout)
