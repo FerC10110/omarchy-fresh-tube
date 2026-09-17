@@ -29,6 +29,7 @@ Panel {
   property int popupWidth: 420
   property int popupHeight: 520
   property bool playerFound: true
+  // The video playCmd is launching; only play() writes it and only playCmd reads it.
   property var pendingPlay: null
   property var prefsQueue: []
   property var channels: []
@@ -125,7 +126,6 @@ Panel {
 
   function dismiss(video) {
     if (!video || seenCmd.running) return
-    pendingPlay = null
     seenCmd.start(["seen", "--", video.videoId])
   }
 
@@ -331,7 +331,6 @@ Panel {
     id: seenCmd
     program: root.program
     onFinished: function(code, out, err) {
-      root.pendingPlay = null
       if (code !== 0) {
         root.setNotice(root.lastLine(err) || "Could not mark it as seen", true)
         return
