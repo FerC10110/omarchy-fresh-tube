@@ -9,6 +9,22 @@ your own short list: the bar shows how many of those channels posted something
 you have not watched, the panel lists one video per channel, a click plays it
 in `mpv`, and what you watched disappears.
 
+![The Fresh Tube panel](preview.png)
+
+What it does:
+
+- Shows in the bar how many of your channels have a video you have not seen.
+- Lists one video per channel, newest first, with its thumbnail; a click plays
+  it in mpv as a small floating window below the bar, and the video leaves
+  the list.
+- Keeps a `Watch later` list of your own: paste any video link, reorder by
+  dragging, and a video leaves the list when mpv reaches its end.
+- Pins up to three videos that should stay listed after you play them.
+- Falls back to Chromium in app mode (just the player, signed in with your
+  own account) when YouTube blocks mpv's downloader.
+- Reads each channel's public RSS feed: no API key, no login, nothing synced
+  with your YouTube account.
+
 ## Install
 
 ```sh
