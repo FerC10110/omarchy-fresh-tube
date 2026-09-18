@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 import support  # noqa: F401  (puts lib/ on sys.path)
-from fresh_tube import ytdlp
+from fresh_tube import limits, ytdlp
 from fresh_tube.errors import NETWORK, FreshTubeError
 
 OUTPUT = ("v1\tFirst video\t20260916\n"
@@ -36,7 +36,7 @@ class Parse(unittest.TestCase):
 
 class Fetch(unittest.TestCase):
     def run_patch(self, **kw):
-        return mock.patch("fresh_tube.ytdlp.subprocess.run", **kw)
+        return mock.patch("fresh_tube.ytdlp.run_capped", **kw)
 
     def test_runs_ytdlp_on_the_videos_tab_and_parses(self):
         done = mock.Mock(returncode=0, stdout=OUTPUT, stderr="")
@@ -50,6 +50,7 @@ class Fetch(unittest.TestCase):
         self.assertIn("--flat-playlist", args)
         self.assertIn("youtubetab:approximate_date", args)
         self.assertEqual(run.call_args.kwargs["timeout"], ytdlp.YTDLP_TIMEOUT)
+        self.assertEqual(run.call_args.kwargs["max_bytes"], limits.YTDLP_MAX_BYTES)
 
     def test_failure_reports_the_last_error_line(self):
         done = mock.Mock(returncode=1, stdout="",
@@ -76,6 +77,13 @@ class Fetch(unittest.TestCase):
              self.assertRaises(FreshTubeError) as caught:
             ytdlp.fetch_via_ytdlp("UC123")
         self.assertEqual(str(caught.exception), "timed out")
+
+    def test_output_over_the_cap(self):
+        with self.run_patch(side_effect=FreshTubeError("output is larger than 1 bytes", NETWORK)), \
+             self.assertRaises(FreshTubeError) as caught:
+            ytdlp.fetch_via_ytdlp("UC123")
+        self.assertEqual(str(caught.exception), "output is larger than 1 bytes")
+        self.assertEqual(caught.exception.code, NETWORK)
 
 
 if __name__ == "__main__":

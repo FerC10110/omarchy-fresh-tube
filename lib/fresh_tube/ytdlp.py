@@ -3,6 +3,7 @@ import re
 import subprocess
 
 from .errors import NETWORK, FreshTubeError
+from .limits import YTDLP_MAX_BYTES, run_capped
 
 VIDEOS_URL = "https://www.youtube.com/channel/{}/videos"
 THUMBNAIL_URL = "https://i.ytimg.com/vi/{}/hqdefault.jpg"
@@ -67,7 +68,7 @@ def last_error(stderr):
 def fetch_via_ytdlp(channel_id, timeout=YTDLP_TIMEOUT):
     """The channel's newest uploads, or a network error saying why yt-dlp could not tell."""
     try:
-        done = subprocess.run(ytdlp_args(channel_id), capture_output=True, text=True, timeout=timeout)
+        done = run_capped(ytdlp_args(channel_id), timeout=timeout, max_bytes=YTDLP_MAX_BYTES)
     except FileNotFoundError:
         raise FreshTubeError("not installed", NETWORK)
     except subprocess.TimeoutExpired:

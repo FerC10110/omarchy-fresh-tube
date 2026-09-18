@@ -6,6 +6,7 @@ import urllib.parse
 
 from .errors import NETWORK, FreshTubeError
 from .feed import fetch_url
+from .limits import OEMBED_MAX_BYTES, YTDLP_MAX_BYTES, run_capped
 from .ytdlp import THUMBNAIL_URL, last_error
 
 VIDEO_ID = r"[0-9A-Za-z_-]{11}"
@@ -52,7 +53,7 @@ def parse_oembed(data):
 def fetch_oembed(video_id, fetch=None):
     fetch = fetch or fetch_url
     url = OEMBED_URL.format(urllib.parse.quote(WATCH_URL.format(video_id), safe=""))
-    return parse_oembed(fetch(url, OEMBED_TIMEOUT))
+    return parse_oembed(fetch(url, OEMBED_TIMEOUT, OEMBED_MAX_BYTES))
 
 
 def _field(value):
@@ -63,7 +64,7 @@ def _field(value):
 def fetch_via_ytdlp(video_id, timeout=YTDLP_TIMEOUT):
     args = ["yt-dlp", "--no-download", "--print", "%(title)s\t%(channel)s", WATCH_URL.format(video_id)]
     try:
-        done = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        done = run_capped(args, timeout=timeout, max_bytes=YTDLP_MAX_BYTES)
     except FileNotFoundError:
         raise FreshTubeError("not installed", NETWORK)
     except subprocess.TimeoutExpired:

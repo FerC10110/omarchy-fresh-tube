@@ -6,6 +6,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 from .errors import NETWORK, FreshTubeError
+from .limits import FEED_MAX_BYTES, read_capped
 
 FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id={}"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
@@ -20,12 +21,12 @@ def feed_url(channel_id):
     return FEED_URL.format(channel_id)
 
 
-def fetch_url(url, timeout):
-    """The body at `url`, or a network error saying why."""
+def fetch_url(url, timeout, max_bytes):
+    """The body at `url`, or a network error saying why; a body over max_bytes is an error (see limits)."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"})
     try:
         with urlopen(request, timeout=timeout) as response:
-            return response.read()
+            return read_capped(response, max_bytes, f"Answer from {url}")
     except urllib.error.HTTPError as e:
         e.close()  # the error carries the response body; drop it now, not at garbage collection
         raise FreshTubeError(f"HTTP {e.code} from {url}", NETWORK)
@@ -59,4 +60,4 @@ def parse_feed(data):
 
 
 def fetch_feed(channel_id, timeout=10):
-    return parse_feed(fetch_url(feed_url(channel_id), timeout))
+    return parse_feed(fetch_url(feed_url(channel_id), timeout, FEED_MAX_BYTES))

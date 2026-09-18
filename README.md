@@ -120,6 +120,12 @@ Everything comes from each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`): no API key, no login, and no
 sync with your YouTube account.
 
+Every answer read from the network has a hard size cap, set in
+`lib/fresh_tube/limits.py`: 1 MiB for a feed, 8 MiB for a channel or video
+page, 64 KiB for oEmbed, and 1 MiB for each of yt-dlp's outputs. A bigger
+answer counts as a failed fetch and is never parsed, so a broken server
+cannot make the plugin eat memory.
+
 ## Remove
 
 ```sh

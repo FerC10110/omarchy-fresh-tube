@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 
 import support
-from fresh_tube import resolve
+from fresh_tube import limits, resolve
 from fresh_tube.errors import NETWORK, USAGE, FreshTubeError
 
 LTT = "UCXuqSBlHAE6Xw-yeJA0Tunw"
@@ -54,7 +54,7 @@ class Resolve(unittest.TestCase):
         fetch = mock.Mock(return_value=support.fixture("channel_page.html"))
         ytdlp = mock.Mock(side_effect=AssertionError("yt-dlp not expected"))
         self.assertEqual(resolve.resolve_channel_id("@LinusTechTips", fetch=fetch, ytdlp=ytdlp), LTT)
-        fetch.assert_called_once_with("https://www.youtube.com/@LinusTechTips", 20)
+        fetch.assert_called_once_with("https://www.youtube.com/@LinusTechTips", 20, limits.PAGE_MAX_BYTES)
 
     def test_video_url_adds_its_channel(self):
         fetch = mock.Mock(return_value=support.fixture("watch_page.html"))
@@ -89,15 +89,18 @@ class Resolve(unittest.TestCase):
 class YtDlp(unittest.TestCase):
     def test_reads_the_printed_id(self):
         done = mock.Mock(returncode=0, stdout=LTT + "\n")
-        with mock.patch("fresh_tube.resolve.subprocess.run", return_value=done) as run:
+        with mock.patch("fresh_tube.resolve.run_capped", return_value=done) as run:
             self.assertEqual(resolve.ytdlp_channel_id("https://www.youtube.com/@x"), LTT)
         self.assertEqual(run.call_args.args[0][:2], ["yt-dlp", "--flat-playlist"])
         self.assertEqual(run.call_args.kwargs["timeout"], 20)
+        self.assertEqual(run.call_args.kwargs["max_bytes"], limits.YTDLP_MAX_BYTES)
 
     def test_missing_or_failing_ytdlp_is_none(self):
-        with mock.patch("fresh_tube.resolve.subprocess.run", side_effect=FileNotFoundError):
+        with mock.patch("fresh_tube.resolve.run_capped", side_effect=FileNotFoundError):
             self.assertIsNone(resolve.ytdlp_channel_id("https://www.youtube.com/@x"))
-        with mock.patch("fresh_tube.resolve.subprocess.run", return_value=mock.Mock(returncode=1, stdout="NA\n")):
+        with mock.patch("fresh_tube.resolve.run_capped", side_effect=FreshTubeError("output is larger than 1 bytes", NETWORK)):
             self.assertIsNone(resolve.ytdlp_channel_id("https://www.youtube.com/@x"))
-        with mock.patch("fresh_tube.resolve.subprocess.run", return_value=mock.Mock(returncode=0, stdout="NA\n")):
+        with mock.patch("fresh_tube.resolve.run_capped", return_value=mock.Mock(returncode=1, stdout="NA\n")):
+            self.assertIsNone(resolve.ytdlp_channel_id("https://www.youtube.com/@x"))
+        with mock.patch("fresh_tube.resolve.run_capped", return_value=mock.Mock(returncode=0, stdout="NA\n")):
             self.assertIsNone(resolve.ytdlp_channel_id("https://www.youtube.com/@x"))

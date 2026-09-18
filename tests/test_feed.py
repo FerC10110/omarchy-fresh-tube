@@ -5,7 +5,7 @@ import urllib.error
 from unittest import mock
 
 import support
-from fresh_tube import feed
+from fresh_tube import feed, limits
 from fresh_tube.errors import NETWORK, FreshTubeError
 
 
@@ -41,7 +41,7 @@ class Fetch(unittest.TestCase):
     def test_fetch_feed_uses_fetch_url(self):
         with mock.patch("fresh_tube.feed.fetch_url", return_value=support.fixture("feed.xml")) as fetch:
             parsed = feed.fetch_feed("UC1", timeout=3)
-        fetch.assert_called_once_with("https://www.youtube.com/feeds/videos.xml?channel_id=UC1", 3)
+        fetch.assert_called_once_with("https://www.youtube.com/feeds/videos.xml?channel_id=UC1", 3, limits.FEED_MAX_BYTES)
         self.assertEqual(parsed["latest"]["videoId"], "newest22222")
 
     def test_http_errors_become_network_errors_and_are_closed(self):
@@ -52,7 +52,7 @@ class Fetch(unittest.TestCase):
             raise raised[-1]
         with mock.patch("fresh_tube.feed.urlopen", boom):
             with self.assertRaises(FreshTubeError) as caught:
-                feed.fetch_url("https://example.invalid/x", 1)
+                feed.fetch_url("https://example.invalid/x", 1, 100)
         self.assertEqual(caught.exception.code, NETWORK)
         self.assertIn("404", str(caught.exception))
         self.assertTrue(raised[0].fp.closed)
@@ -62,7 +62,7 @@ class Fetch(unittest.TestCase):
             raise urllib.error.URLError("no route")
         with mock.patch("fresh_tube.feed.urlopen", boom):
             with self.assertRaises(FreshTubeError) as caught:
-                feed.fetch_url("https://example.invalid/x", 1)
+                feed.fetch_url("https://example.invalid/x", 1, 100)
         self.assertEqual(caught.exception.code, NETWORK)
 
     def test_incomplete_read_is_a_network_error(self):
@@ -73,18 +73,42 @@ class Fetch(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-            def read(self):
+            def read(self, n=-1):
                 raise http.client.IncompleteRead(b"")
 
         def capture(request, timeout):
             return Response()
         with mock.patch("fresh_tube.feed.urlopen", capture):
             with self.assertRaises(FreshTubeError) as caught:
-                feed.fetch_url("https://example.invalid/x", 1)
+                feed.fetch_url("https://example.invalid/x", 1, 100)
         self.assertEqual(caught.exception.code, NETWORK)
 
     def test_request_carries_a_browser_user_agent(self):
         seen = {}
+
+        class Response:
+            body = io.BytesIO(b"body")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                return self.body.read(n)
+
+        def capture(request, timeout):
+            seen["ua"] = request.get_header("User-agent")
+            seen["timeout"] = timeout
+            return Response()
+        with mock.patch("fresh_tube.feed.urlopen", capture):
+            self.assertEqual(feed.fetch_url("https://example.invalid/x", 7, 100), b"body")
+        self.assertIn("Mozilla", seen["ua"])
+        self.assertEqual(seen["timeout"], 7)
+
+    def test_an_answer_over_the_cap_is_a_network_error(self):
+        served = []
 
         class Response:
             def __enter__(self):
@@ -93,14 +117,14 @@ class Fetch(unittest.TestCase):
             def __exit__(self, *a):
                 return False
 
-            def read(self):
-                return b"body"
+            def read(self, n=-1):
+                assert n > 0, "an unbounded read"
+                served.append(n)
+                return b"x" * n
 
-        def capture(request, timeout):
-            seen["ua"] = request.get_header("User-agent")
-            seen["timeout"] = timeout
-            return Response()
-        with mock.patch("fresh_tube.feed.urlopen", capture):
-            self.assertEqual(feed.fetch_url("https://example.invalid/x", 7), b"body")
-        self.assertIn("Mozilla", seen["ua"])
-        self.assertEqual(seen["timeout"], 7)
+        with mock.patch("fresh_tube.feed.urlopen", lambda request, timeout: Response()):
+            with self.assertRaises(FreshTubeError) as caught:
+                feed.fetch_url("https://example.invalid/x", 1, 10)
+        self.assertEqual(caught.exception.code, NETWORK)
+        self.assertEqual(str(caught.exception), "Answer from https://example.invalid/x is larger than 10 bytes")
+        self.assertEqual(sum(served), 11)
