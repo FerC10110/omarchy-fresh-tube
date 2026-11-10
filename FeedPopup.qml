@@ -92,11 +92,7 @@ PanelWindow {
     right: true
   }
 
-  readonly property real _barStripSize: {
-    if (!bar) return 0
-    var actual = (root.barPos === "top" || root.barPos === "bottom") ? root.barH : root.barW
-    return Math.max(bar.barSize, actual) + root.gap
-  }
+  readonly property real _barStripSize: bar ? barThickness + gap : 0
 
   // Unpinned: the whole screen is ours so a click anywhere dismisses.
   // Pinned: only the card takes input; everything else reaches the apps below.
@@ -120,13 +116,18 @@ PanelWindow {
   }
   readonly property real screenW: screen ? screen.width : 0
   readonly property real screenH: screen ? screen.height : 0
+  // Since Omarchy 4.5 the bar window spans its whole screen, so its size says
+  // nothing about the strip; the strip's thickness does (as in the stock
+  // Ui/KeyboardPanel.qml). barW/barH only map points into bar-window coords.
+  readonly property real barThickness: !bar ? 0
+    : (typeof bar.barSizeFor === "function" && screen ? bar.barSizeFor(screen.name) : bar.barSize)
   readonly property real barW: anchorWindow ? anchorWindow.width : screenW
   readonly property real barH: anchorWindow ? anchorWindow.height : 0
   readonly property real availableCardWidth: screenW > 0
-    ? Math.max(120, screenW - ((barPos === "left" || barPos === "right") ? barW + gap + margin : margin * 2))
+    ? Math.max(120, screenW - ((barPos === "left" || barPos === "right") ? barThickness + gap + margin : margin * 2))
     : 0
   readonly property real availableCardHeight: screenH > 0
-    ? Math.max(120, screenH - ((barPos === "top" || barPos === "bottom") ? barH + gap + margin : margin * 2))
+    ? Math.max(120, screenH - ((barPos === "top" || barPos === "bottom") ? barThickness + gap + margin : margin * 2))
     : 0
   readonly property real verticalContentInset: padding * 2 + Border.top(borderSpec) + Border.bottom(borderSpec)
 
@@ -150,16 +151,16 @@ PanelWindow {
     var x = 0, y = 0
     if (barPos === "bottom") {
       x = anchorScreenPos.x
-      y = screenH - barH - contentHeight - gap
+      y = screenH - barThickness - contentHeight - gap
     } else if (barPos === "left") {
-      x = barW + gap
+      x = barThickness + gap
       y = anchorScreenPos.y
     } else if (barPos === "right") {
-      x = screenW - barW - contentWidth - gap
+      x = screenW - barThickness - contentWidth - gap
       y = anchorScreenPos.y
     } else {
       x = anchorScreenPos.x
-      y = barH + gap
+      y = barThickness + gap
     }
     x = clamp(x, margin, Math.max(margin, screenW - contentWidth - margin))
     y = clamp(y, margin, Math.max(margin, screenH - contentHeight - margin))
